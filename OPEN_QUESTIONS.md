@@ -205,3 +205,27 @@ field makes that easy.
 we should add an explicit `confidence: "high" | "medium" | "low"` (or
 numeric 0–1). If we add it, decide how analyzers produce it without
 guessing.
+
+---
+
+## Q11 — Third-party pub/sub libraries
+
+`import mitt from 'mitt'; const bus = mitt(); bus.emit('user:updated'); bus.on('user:updated', …);`
+
+**Why it matters:** The `shared-event-channel` analyzer detects native
+`window.dispatchEvent` / `addEventListener` coupling, but many codebases
+route events through third-party buses (`mitt`, `nanoevents`,
+`EventEmitter`, `RxJS` subjects, framework-specific event systems like
+Redux actions or Vue's `$emit`). Missing these means silent blind spots on
+a large share of real implicit event coupling.
+
+**Working assumption:** v1 of `shared-event-channel` detects only native
+`window` / `globalThis` event APIs. Third-party buses are not detected.
+The reviewer sees `bus.emit('x')` as an ordinary method call with no
+special meaning.
+
+**Needs:** Config-driven wrapper declarations — very similar to Q2 (storage
+wrappers). A project declares "function `X.emit` is a dispatch; function
+`X.on` is a listen; first string arg is the channel name." Without that
+declaration, reliable detection requires type-flow analysis (violates D5).
+Probably resolves together with Q2 and Q3 (config format).
