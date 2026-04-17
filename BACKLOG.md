@@ -20,6 +20,7 @@ Shipped (also listed for cross-reference with `PATTERNS.md`):
 Planned:
 - [ ] `duplicate-static-svg-id` — hardcoded SVG IDs in multi-rendered components (see P6)
 - [ ] `module-scope-handler` — module-scope fn passed by name to `addEventListener` inside a re-runnable setup (see P7)
+- [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
 - [ ] Shape-drift on shared storage keys (completes P4 — key agreement detected, shape mismatch not yet)

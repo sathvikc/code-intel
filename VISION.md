@@ -21,9 +21,14 @@ Real systems have two dependency graphs:
    multiple import sites, file pairs that always change together but have no
    import edge.
 
-No open-source tool sees the implicit graph. That is where the bugs live in
-mature JS/TS codebases, because it is where senior engineers already know to
-look — and where linters, type checkers, and AI agents are blind.
+No open-source tool sees the implicit graph. Nor does any catch the adjacent
+class of bugs where the cause is *visible in source but invisible to type
+checkers and linters* — a value frozen at module load, a duplicated DOM ID in
+a component rendered many times, a built-in global replaced by a Proxy that
+swallows third-party writes, a module-scope handler reference that confuses
+a production-only instrumentation wrapper. These are the bugs mature JS/TS
+codebases lose time to — where senior engineers already know to look, and
+where linters, type checkers, and AI agents are blind.
 
 ## What We're Building
 
@@ -32,15 +37,35 @@ layers:
 
 ### Layer 1 — The engine (our moat)
 
-An implicit-coupling analyzer built on the TypeScript compiler API. Finds:
+A catalogue of **bug-pattern detectors** built on the TypeScript compiler API.
+Every detector corresponds to a real production bug — observed, post-mortem'd,
+or remembered — tracked in [`PATTERNS.md`](./PATTERNS.md) as `P<N>`. The
+catalogue grows every time a new pattern is shared.
 
-- Cross-file shared-state contracts (storage keys, event channels, globals, cookies)
-- Stale module-level captures (runtime reads frozen at import time)
-- Change-coupling between files with no import edge (from git history)
-- Blast radius across the implicit graph, not just the import graph
+Three categories cover what the engine finds today. The categories, like the
+catalogue, are expected to grow:
 
-This is the code we own, the problem we uniquely solve, and the reason the tool
-exists.
+**Cross-file implicit coupling (P1–P4).** State shared through storage keys,
+event channels, globals, cookies, module singletons. Files talk to each other
+without an import edge; no existing tool sees the link.
+
+**Module-scope lifecycle bugs (P5, P6).** Values captured from dynamic sources
+at module load and then frozen; DOM-scope identifiers duplicated across
+repeated component instances. Visible in source; invisible to type checkers
+and linters.
+
+**Runtime bugs with a static signature (P7, P8).** Third-party wrappers,
+production-only instrumentation, proxy-replaced platform globals. The bug
+fires at runtime — often only in production — but the *smell* is visible in
+source. Detection for these is recall-first and noisier (closer to how
+SonarQube flags "code smells"), because the alternative is no detection at
+all: these are bugs that *no existing tool* reports.
+
+Orthogonal engine capabilities (planned): change-coupling from git history,
+blast-radius queries across the implicit graph.
+
+This is the code we own, the problem we uniquely solve, and the reason the
+tool exists.
 
 ### Layer 2 — The orchestrator (completeness without scope creep)
 
@@ -107,13 +132,19 @@ Features that don't serve that question get cut.
   starting position.
 - **Not all-in-one-by-rewriting.** All-in-one by *integrating*.
 - **Not a runtime profiler, type inferencer for untyped JS, or human code review
-  replacement.** Judgment, design intent, and runtime-only bugs stay with humans.
+  replacement.** Judgment, design intent, and bugs with no visible source
+  signature stay with humans. (Note: runtime bugs that *do* have a static
+  signature — proxied globals, stable-reference handlers, etc. — are in
+  scope as best-effort code smells.)
 
 ## Scope Guardrails
 
 Every feature request gets run through this gate:
 
-1. **Is it implicit-coupling detection?** → belongs in the engine.
+1. **Is it a pre-production bug pattern detector?** → belongs in the engine.
+   (Today that spans implicit coupling, module-scope lifecycle bugs, and
+   runtime-with-static-signature code smells. Tomorrow, whatever the next
+   entry in `PATTERNS.md` looks like.)
 2. **Is it commodity analysis an existing tool already does well?** → orchestrate
    it, don't rebuild.
 3. **Does it make AI-agent consumption better (MCP, schema, blast radius queries)?**
