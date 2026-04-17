@@ -1,54 +1,50 @@
 # Examples
 
-Small, runnable reproductions of implicit-coupling patterns we've seen in
-real codebases. Each example is a minimal scenario the analyzer should
-detect, used for:
+Two stable example projects (`app-a` and `app-b`) that host real-world
+implicit-coupling patterns, drawn from production bugs. We don't grow a
+new top-level folder per scenario; new patterns get added as files inside
+`app-a/src/<feature>/` or `app-b/src/<feature>/`, often with a matching
+counterpart in the other app to exercise cross-project detection.
 
-- **Dogfooding** — run the analyzer against them, check the output is useful
-- **Regression** — if an analyzer change breaks an example's output, we see it
-- **Discovery** — when the user encounters a new pattern in enterprise code,
-  we add a stripped-down version here and see whether the analyzer catches
-  it. If not, that's a bug or a backlog item (see `BACKLOG.md`).
+## Apps
 
-## Layout
+- `app-a/` — primary application. Hosts most scenarios; coupling often
+  points *from* here.
+- `app-b/` — secondary application sharing the same runtime environment.
+  Exists specifically so we can exercise cross-project detection.
 
-Each example lives in a numbered folder. Order is chronological, not
-priority.
+## Scenarios currently in the fixtures
 
-```
-examples/
-  README.md                              (this file)
-  01-web-storage-auth-token/             single-project storage coupling
-  02-events-user-updated-cross-app/      multi-project event coupling
-  ...
-```
+| Scenario | Location | Analyzer |
+|---|---|---|
+| `auth.token` in `localStorage` (login writes, api-client reads) | `app-a/src/auth/` | `shared-state` |
+| `user:updated` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` |
 
-Each folder has:
+More will be added in subsequent commits (feature-flag SSR/CSR staleness,
+`getCookie` cross-script collision, stale module-scope captures, etc.).
 
-- A `README.md` — what the pattern is, why it's a bug, expected analyzer output
-- One or more app directories with `package.json` + source files
-
-## Running an example
+## Running the analyzers
 
 From the repo root:
 
 ```bash
-# single-project example
-node src/cli.js shared-state examples/01-web-storage-auth-token/app --pretty
+# Web storage coupling (single-project scan of app-a)
+node src/cli.js shared-state examples/app-a --pretty
 
-# multi-project example (each app is a separate project)
-node src/cli.js shared-events examples/02-events-user-updated-cross-app/app-a examples/02-events-user-updated-cross-app/app-b --pretty
+# Cross-project event coupling (both apps as separate projects)
+node src/cli.js shared-events examples/app-a examples/app-b --pretty
 ```
 
-## Adding a new example
+## Adding a new scenario
 
-When you find a coupling pattern in real code:
+1. Strip the pattern to the smallest reproduction. Use fictional names;
+   never ship real production code.
+2. Pick a feature slug (`auth`, `events`, `flags`, `cookies`, `customer`…)
+   and put files in `app-a/src/<slug>/` and/or `app-b/src/<slug>/`.
+3. Add a row to the scenario table above. If the analyzer doesn't yet
+   detect the pattern, that's a lead — file it in `BACKLOG.md` or
+   `OPEN_QUESTIONS.md`, then fix the analyzer.
 
-1. Strip it to the smallest snippet that reproduces the pattern. Use
-   fictional project / variable / key names; never ship real code here.
-2. Create `examples/NN-short-slug/` with the next number.
-3. Add a `README.md` that describes the pattern and what the analyzer
-   should find.
-4. Run the relevant analyzer and confirm the output is what you'd want an
-   AI reviewer to see. If it isn't, that's a lead — file it in `BACKLOG.md`
-   or `OPEN_QUESTIONS.md`, fix the analyzer, or both.
+The rule: **noise is better than missing** (per `DESIGN_DECISIONS.md` D2).
+Fixtures exercise recall; if an analyzer walks these examples and emits a
+finding, that's success, even if a human might dismiss it.
