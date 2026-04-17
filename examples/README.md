@@ -15,13 +15,17 @@ counterpart in the other app to exercise cross-project detection.
 
 ## Scenarios currently in the fixtures
 
-| Scenario | Location | Analyzer |
+| Scenario | Location | Analyzer (status) |
 |---|---|---|
-| `auth.token` in `localStorage` (login writes, api-client reads) | `app-a/src/auth/` | `shared-state` |
-| `user:updated` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` |
+| `auth.token` in `localStorage` (login writes, api-client reads) | `app-a/src/auth/` | `shared-state` ✓ |
+| `user:updated` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` ✓ |
+| SSR-injected vs CSR-cached feature flags — same `sessionStorage['flags']` key, two writers, shape mismatch | `app-a/src/flags/` | `shared-state` ✓ (detects coupling; reviewer/AI spots the shape mismatch) |
+| `getCookie` classic-script collision — both apps define top-level `function getCookie(...)` in a .js script, later load overwrites earlier | `app-a/src/cookies/`, `app-b/src/cookies/` | `shared-global-binding` (planned) |
+| Stale module-scope capture — `const customerType = getCustomerType()` at module scope, value frozen at import time | `app-a/src/customer/` | `stale-module-capture` (planned) |
 
-More will be added in subsequent commits (feature-flag SSR/CSR staleness,
-`getCookie` cross-script collision, stale module-scope captures, etc.).
+A ✓ means the analyzer already detects the pattern (run the command in
+the next section to see it). "Planned" means the pattern is a fixture
+but the analyzer is on the way.
 
 ## Running the analyzers
 
