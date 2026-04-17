@@ -1,15 +1,15 @@
 // app-a/src/flags/csr-loader.ts
 //
 // CSR feature-flag loader. Fetches flags from the API, caches the payload
-// in sessionStorage under 'flags' with a 15-minute TTL. Subsequent calls
-// within the TTL short-circuit and return the cached value without
-// hitting the API.
+// in sessionStorage under 'app.runtime-config' with a 15-minute TTL.
+// Subsequent calls within the TTL short-circuit and return the cached
+// value without hitting the API.
 //
-// Implicit coupling (bug): writes the SAME 'flags' key as
+// Implicit coupling (bug): writes the SAME 'app.runtime-config' key as
 // ssr-inject.ts — but with a DIFFERENT payload shape (this one wraps in
 // {value, fetchedAt}; SSR writes the flags object directly). On a fresh
 // page load, SSR writes the raw flags object first, then this loader
-// runs, sees non-JSON-wrapper data under 'flags', either crashes on
+// runs, sees non-JSON-wrapper data under 'app.runtime-config', either crashes on
 // `.fetchedAt` being undefined or refreshes unnecessarily; OR after the
 // loader has run once, SSR's next page-load write stomps the cache
 // envelope and the next reader sees raw flags where it expects a cache
@@ -26,7 +26,7 @@ interface CachedFlags {
 }
 
 export async function loadFeatureFlags(): Promise<Record<string, unknown>> {
-  const raw = sessionStorage.getItem('flags');
+  const raw = sessionStorage.getItem('app.runtime-config');
   if (raw) {
     try {
       const cached: CachedFlags = JSON.parse(raw);
@@ -39,6 +39,6 @@ export async function loadFeatureFlags(): Promise<Record<string, unknown>> {
   }
   const res = await fetch('/api/feature-flags');
   const value = (await res.json()) as Record<string, unknown>;
-  sessionStorage.setItem('flags', JSON.stringify({ value, fetchedAt: Date.now() } satisfies CachedFlags));
+  sessionStorage.setItem('app.runtime-config', JSON.stringify({ value, fetchedAt: Date.now() } satisfies CachedFlags));
   return value;
 }

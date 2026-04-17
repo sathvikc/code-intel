@@ -17,11 +17,11 @@ counterpart in the other app to exercise cross-project detection.
 
 | Scenario | Location | Analyzer (status) |
 |---|---|---|
-| `auth.token` in `localStorage` (login writes, api-client reads) | `app-a/src/auth/` | `shared-state` ✓ |
-| `user:updated` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` ✓ |
-| SSR-injected vs CSR-cached feature flags — same `sessionStorage['flags']` key, two writers, shape mismatch | `app-a/src/flags/` | `shared-state` ✓ (detects coupling; reviewer/AI spots the shape mismatch) |
-| `getCookie` classic-script collision — both apps define top-level `function getCookie(...)` in a .js script, later load overwrites earlier | `app-a/src/cookies/`, `app-b/src/cookies/` | `shared-globals` ✓ |
-| Stale module-scope capture — `const customerType = getCustomerType()` at module scope, value frozen at import time | `app-a/src/customer/` | `stale-captures` ✓ |
+| `app.session` in `localStorage` (login writes, api-client reads) | `app-a/src/auth/` | `shared-state` ✓ |
+| `profile:changed` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` ✓ |
+| SSR-injected vs CSR-cached feature flags — same `sessionStorage['app.runtime-config']` key, two writers, shape mismatch | `app-a/src/flags/` | `shared-state` ✓ (detects coupling; reviewer/AI spots the shape mismatch) |
+| Classic-script collision — both apps define the same top-level `function parseCookie(...)` in a .js script, later load overwrites earlier | `app-a/src/cookies/`, `app-b/src/cookies/` | `shared-globals` ✓ |
+| Stale module-scope capture — `const accountTier = getAccountTier()` at module scope, value frozen at import time | `app-a/src/account/` | `stale-captures` ✓ |
 
 A ✓ means the analyzer already detects the pattern (run the command in
 the next section to see it). "Planned" means the pattern is a fixture
@@ -38,10 +38,10 @@ node src/cli.js shared-state examples/app-a --pretty
 # Cross-project event coupling (both apps as separate projects)
 node src/cli.js shared-events examples/app-a examples/app-b --pretty
 
-# Cross-script global-binding collisions (getCookie in both apps)
+# Cross-script global-binding collisions (parseCookie in both apps)
 node src/cli.js shared-globals examples/app-a examples/app-b --pretty
 
-# Stale module-scope captures (customerType frozen at import time)
+# Stale module-scope captures (accountTier frozen at import time)
 node src/cli.js stale-captures examples/app-a --pretty
 ```
 
@@ -49,7 +49,7 @@ node src/cli.js stale-captures examples/app-a --pretty
 
 1. Strip the pattern to the smallest reproduction. Use fictional names;
    never ship real production code.
-2. Pick a feature slug (`auth`, `events`, `flags`, `cookies`, `customer`…)
+2. Pick a feature slug (`auth`, `events`, `flags`, `cookies`, `account`…)
    and put files in `app-a/src/<slug>/` and/or `app-b/src/<slug>/`.
 3. Add a row to the scenario table above. If the analyzer doesn't yet
    detect the pattern, that's a lead — file it in `BACKLOG.md` or

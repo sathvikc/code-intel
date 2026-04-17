@@ -15,12 +15,12 @@ import {
 
 test('detects window.dispatchEvent(new CustomEvent("name"))', () => {
   const occ = analyzeSource(
-    `window.dispatchEvent(new CustomEvent('user:updated', { detail: u }));`,
+    `window.dispatchEvent(new CustomEvent('profile:changed', { detail: u }));`,
     'f.ts',
   );
   assert.equal(occ.length, 1);
   assert.equal(occ[0].op, 'dispatch');
-  assert.equal(occ[0].name, 'user:updated');
+  assert.equal(occ[0].name, 'profile:changed');
   assert.equal(occ[0].detectedVia, 'custom-event');
   assert.equal(occ[0].host, 'window');
   assert.equal(occ[0].dynamic, false);
@@ -38,18 +38,18 @@ test('detects window.dispatchEvent(new Event("name"))', () => {
 
 test('detects window.addEventListener with string literal', () => {
   const occ = analyzeSource(
-    `window.addEventListener('user:updated', (e) => console.log(e));`,
+    `window.addEventListener('profile:changed', (e) => console.log(e));`,
     'f.ts',
   );
   assert.equal(occ.length, 1);
   assert.equal(occ[0].op, 'listen');
-  assert.equal(occ[0].name, 'user:updated');
+  assert.equal(occ[0].name, 'profile:changed');
   assert.equal(occ[0].detectedVia, 'event-listener');
 });
 
 test('detects window.removeEventListener as unlisten', () => {
   const occ = analyzeSource(
-    `window.removeEventListener('user:updated', h);`,
+    `window.removeEventListener('profile:changed', h);`,
     'f.ts',
   );
   assert.equal(occ.length, 1);
@@ -82,7 +82,7 @@ test('bare dispatchEvent(...) is treated as implicit window.*', () => {
 
 test('flags dynamic channel names (non-literal first arg)', () => {
   const occ = analyzeSource(
-    `const k = 'user:updated';
+    `const k = 'profile:changed';
      window.dispatchEvent(new CustomEvent(k));
      window.addEventListener(eventName, h);`,
     'f.ts',
@@ -161,19 +161,19 @@ function write(root, rel, content) {
 test('groups same channel across files and projects', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
-  write(a, 'src/emit.ts', `window.dispatchEvent(new CustomEvent('user:updated', { detail: u }));`);
+  write(a, 'src/emit.ts', `window.dispatchEvent(new CustomEvent('profile:changed', { detail: u }));`);
 
   const b = mktmp();
   write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
-  write(b, 'src/listen.ts', `globalThis.addEventListener('user:updated', handler);`);
+  write(b, 'src/listen.ts', `globalThis.addEventListener('profile:changed', handler);`);
 
   const result = analyzeProjects([a, b]);
   assert.equal(result.version, '0.1');
   assert.equal(result.analyzer, ANALYZER_ID);
   assert.equal(result.projects.length, 2);
 
-  const f = result.findings.find(x => x.channel === 'user:updated');
-  assert.ok(f, 'expected finding for user:updated');
+  const f = result.findings.find(x => x.channel === 'profile:changed');
+  assert.ok(f, 'expected finding for profile:changed');
   assert.equal(f.kind, 'shared-event-channel');
   assert.equal(f.occurrences.length, 2);
   const projects = new Set(f.occurrences.map(o => o.project));

@@ -1,11 +1,11 @@
 // shared-state analyzer: global-binding collisions.
 //
 // Detects two or more files defining the same name on the global object.
-// The canonical production bug: two teams ship classic <script> files, each
-// with `function getCookie() {…}` at the top level. Whichever loads later
-// silently overwrites the earlier, breaking callers that expected the
-// earlier behavior. No import graph, bundler, or linter sees this because
-// it's cross-script coupling on `window`.
+// The canonical production bug: two teams ship classic <script> files,
+// each with an identically-named top-level helper function. Whichever
+// loads later silently overwrites the earlier, breaking callers that
+// expected the earlier behavior. No import graph, bundler, or linter
+// sees this because it's cross-script coupling on `window`.
 //
 // Detection cases (syntactic, D5):
 //   A. Explicit:   window.X = …, globalThis.X = …, self.X = …

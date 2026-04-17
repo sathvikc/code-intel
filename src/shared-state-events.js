@@ -1,9 +1,9 @@
 // shared-state analyzer: event channels (window / globalThis CustomEvent)
 //
 // Detects cross-file (and cross-project) coupling through browser event APIs.
-// File A dispatches `new CustomEvent('user:updated')`; file B listens with
-// `addEventListener('user:updated', handler)`. No import links them; the
-// channel name is the coupling key.
+// File A dispatches `new CustomEvent('profile:changed')`; file B listens
+// with `addEventListener('profile:changed', handler)`. No import links
+// them; the channel name is the coupling key.
 //
 // Syntactic only (D5). Multi-project first-class (D1). Recall over precision
 // (D2). Every occurrence carries `detectedVia` (D4).

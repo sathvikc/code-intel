@@ -2,9 +2,9 @@
 //
 // Bug pattern (real, seen in production):
 //
-//   const customerType = getCustomerType();  // module scope
+//   const accountTier = getAccountTier();  // module scope
 //   export function render() {
-//     // customerType is frozen at module load — cookie flips mid-session
+//     // accountTier is frozen at module load — cookie flips mid-session
 //     // don't update it. Silent staleness.
 //   }
 //
@@ -16,7 +16,7 @@
 //     (document.cookie, sessionStorage.getItem, navigator.*, fetch(), …),
 //     the function's name is registered as a reader. This works
 //     cross-file: a reader defined in detect.ts is known when we scan
-//     greeting.ts.
+//     render.ts.
 //
 //   Pass 2 — find captures:
 //     For every top-level VariableStatement, if the initializer expression

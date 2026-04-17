@@ -14,10 +14,10 @@ import {
 // ---------- analyzeSource (unit) ----------
 
 test('detects localStorage.setItem with string literal', () => {
-  const occ = analyzeSource(`localStorage.setItem('auth.token', t);`, 'f.ts');
+  const occ = analyzeSource(`localStorage.setItem('app.session', t);`, 'f.ts');
   assert.equal(occ.length, 1);
   assert.equal(occ[0].storage, 'localStorage');
-  assert.equal(occ[0].key, 'auth.token');
+  assert.equal(occ[0].key, 'app.session');
   assert.equal(occ[0].op, 'write');
   assert.equal(occ[0].dynamic, false);
   assert.equal(occ[0].line, 1);
@@ -48,7 +48,7 @@ test('resolves window.localStorage and globalThis.localStorage', () => {
 
 test('flags dynamic keys (non-literal first argument)', () => {
   const src = `
-    const k = 'auth.token';
+    const k = 'app.session';
     localStorage.setItem(k, 'v');
     localStorage.getItem(\`prefix.\${id}\`);
   `;
@@ -69,10 +69,10 @@ test('ignores unrelated method calls and identifiers', () => {
 });
 
 test('treats no-substitution template as literal key', () => {
-  const src = "localStorage.setItem(`auth.token`, v);";
+  const src = "localStorage.setItem(`app.session`, v);";
   const occ = analyzeSource(src, 'f.ts');
   assert.equal(occ.length, 1);
-  assert.equal(occ[0].key, 'auth.token');
+  assert.equal(occ[0].key, 'app.session');
   assert.equal(occ[0].dynamic, false);
 });
 
@@ -98,24 +98,24 @@ test('method-call detections carry detectedVia: "method-call"', () => {
 // ---------- indexed access (D4 / new pattern) ----------
 
 test('indexed write with string literal', () => {
-  const occ = analyzeSource(`localStorage['auth.token'] = token;`, 'f.ts');
+  const occ = analyzeSource(`localStorage['app.session'] = token;`, 'f.ts');
   assert.equal(occ.length, 1);
   assert.equal(occ[0].op, 'write');
-  assert.equal(occ[0].key, 'auth.token');
+  assert.equal(occ[0].key, 'app.session');
   assert.equal(occ[0].detectedVia, 'indexed-access');
   assert.equal(occ[0].dynamic, false);
 });
 
 test('indexed read with string literal', () => {
-  const occ = analyzeSource(`const t = localStorage['auth.token'];`, 'f.ts');
+  const occ = analyzeSource(`const t = localStorage['app.session'];`, 'f.ts');
   assert.equal(occ.length, 1);
   assert.equal(occ[0].op, 'read');
-  assert.equal(occ[0].key, 'auth.token');
+  assert.equal(occ[0].key, 'app.session');
   assert.equal(occ[0].detectedVia, 'indexed-access');
 });
 
 test('delete on indexed access → remove with detectedVia "delete"', () => {
-  const occ = analyzeSource(`delete localStorage['auth.token'];`, 'f.ts');
+  const occ = analyzeSource(`delete localStorage['app.session'];`, 'f.ts');
   assert.equal(occ.length, 1);
   assert.equal(occ[0].op, 'remove');
   assert.equal(occ[0].detectedVia, 'delete');
@@ -224,12 +224,12 @@ function write(root, rel, content) {
 test('groups the same storage key across files and projects', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
-  write(a, 'src/login.ts', `localStorage.setItem('auth.token', t);`);
+  write(a, 'src/login.ts', `localStorage.setItem('app.session', t);`);
 
   const b = mktmp();
   write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
-  write(b, 'src/client.ts', `const t = localStorage.getItem('auth.token');`);
-  write(b, 'src/logout.ts', `localStorage.removeItem('auth.token');`);
+  write(b, 'src/client.ts', `const t = localStorage.getItem('app.session');`);
+  write(b, 'src/logout.ts', `localStorage.removeItem('app.session');`);
 
   const result = analyzeProjects([a, b]);
   assert.equal(result.version, SCHEMA_VERSION);
@@ -237,9 +237,9 @@ test('groups the same storage key across files and projects', () => {
   assert.equal(result.projects.length, 2);
 
   const authFinding = result.findings.find(
-    f => f.storage === 'localStorage' && f.key === 'auth.token',
+    f => f.storage === 'localStorage' && f.key === 'app.session',
   );
-  assert.ok(authFinding, 'expected a finding for localStorage.auth.token');
+  assert.ok(authFinding, 'expected a finding for localStorage.app.session');
   assert.equal(authFinding.dynamic, false);
   const projectsInFinding = new Set(authFinding.occurrences.map(o => o.project));
   assert.deepEqual([...projectsInFinding].sort(), ['app-a', 'app-b']);

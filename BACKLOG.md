@@ -43,8 +43,8 @@ Planned:
 ## Docs
 
 - [ ] `SCHEMA.md` — once ≥2 analyzers exist and the shape is observed, not guessed
-- [ ] `README.md` — user-facing, when we have something runnable to show
-- [ ] `examples/` — real-world dogfood outputs
+- [x] `README.md` — snapshot; will be rewritten as catalogue grows
+- [ ] `examples/` — real-world dogfood outputs beyond the synthetic fixtures
 
 ## Ideas / exploratory
 

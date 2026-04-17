@@ -40,21 +40,21 @@ recall anchor when revisiting months later.
 - **Detector:** built — `shared-events` (`src/shared-state-events.js`).
 - **Source:** common micro-frontend / multi-bundle pattern.
 
-## P3 — Classic-script global-binding collision (e.g. `getCookie`)
+## P3 — Classic-script global-binding collision across non-module scripts
 
 - **Symptoms:** intermittent, environment-dependent behavior. The later-loaded script silently overwrites an identically-named global from an earlier one. Sometimes a deploy order change is enough to invert the bug.
 - **Root cause:** two unrelated `.js` files (loaded as classic scripts, not ES modules) each declare a top-level `function X(...)` or `var X = ...`. Both become properties of `window`.
 - **Static signal:** same name declared at top-level in ≥2 non-module source files; or explicit `window.X = ...` / `globalThis.X = ...` writes colliding with those.
 - **Detector:** built — `shared-globals` (`src/shared-state-globals.js`).
-- **Source:** real incident — two teams independently defined `function getCookie(name)` and the cookie-parsing logic silently flipped depending on load order.
+- **Source:** real incident — two independently-authored classic scripts each defined the same top-level helper function at the same name; the cookie-parsing logic silently flipped depending on load order.
 
 ## P4 — SSR-injected value vs CSR-cached value with shape drift
 
 - **Symptoms:** feature flags appear stale or wrong-shaped after a deploy; CSR code path reads yesterday's serialized structure; SSR and CSR give different answers for the same key.
 - **Root cause:** the SSR inline script writes storage key `K` with shape `S1`; the CSR loader caches key `K` with shape `S2` and a TTL. Same key, two writers, two shapes. When the CSR cache is fresh it serves the stale shape.
-- **Static signal:** same storage key written by ≥2 sources with structurally different right-hand-side expressions. Bonus: at least one of those writers is an SSR/inline context (Astro `<script is:inline>`, Next.js `__NEXT_DATA__`, Remix meta, etc.).
+- **Static signal:** same storage key written by ≥2 sources with structurally different right-hand-side expressions. Bonus: at least one of those writers is an SSR/inline context (server-rendered inline `<script>` blocks, `__NEXT_DATA__`-style hydration payloads, framework-specific inline script directives).
 - **Detector:** partial — `shared-state` surfaces the coupling. Shape-drift detection not yet built (see BACKLOG → wrapper / shape inference).
-- **Source:** real incident — Astro SSR inline script and CSR hydration both wrote `sessionStorage['flags']` in incompatible shapes.
+- **Source:** real incident — an SSR-framework inline script and a CSR hydration path both wrote the same `sessionStorage` key in incompatible shapes.
 
 ## P5 — Stale module-scope capture of a dynamic source
 
@@ -62,16 +62,16 @@ recall anchor when revisiting months later.
 - **Root cause:** a `const / let / var` at module scope was initialized from a dynamic source (`document.cookie`, `sessionStorage.getItem`, `navigator.*`, `fetch(...)`, or a wrapper function that touches any of these). The value is captured once at module load and never re-read.
 - **Static signal:** module-scope variable declaration whose initializer expression tree contains either a direct dynamic API call/read or a call to a function whose body does. Cross-file reader detection works by function name.
 - **Detector:** built — `stale-captures` (`src/stale-module-capture.js`).
-- **Source:** real incident — `const customerType = getCustomerType()` at module scope where `getCustomerType` read `document.cookie`; impersonation and login flows silently saw the pre-impersonation customer type.
+- **Source:** real incident — a module-scope `const` initialised from a helper that read `document.cookie`; session-context changes (login, role switch, admin tooling that swaps the active session) silently left the module reading the pre-change value for the rest of the page lifetime.
 
 ## P6 — Duplicate hard-coded IDs in inline SVG components rendered many times
 
 - **Symptoms:** visual corruption in pages where an icon/component is rendered multiple times. Gradients render as solid colors, filters disappear, masks fill with wrong content. Only happens in pages with pre-rendering, SSR-of-many-instances, long repeating lists, or nav panels rendered for every tab up front.
-- **Root cause:** the component contains an inline `<svg>` with a `<defs>` block declaring `<linearGradient id="myGrad">` (or `<mask>`, `<filter>`, `<clipPath>`, etc.) and later references it via `fill="url(#myGrad)"`. **SVG IDs are global to the document, not scoped to the component.** When the component is rendered N times, there are N elements with `id="myGrad"` in the DOM. Browsers resolve `url(#myGrad)` to the *first* one — every copy after the first renders against a definition that may not match, or whose parent was removed. Deleting the ID breaks the reference entirely; the fix is programmatic ID namespacing per instance.
+- **Root cause:** the component contains an inline `<svg>` with a `<defs>` block declaring `<linearGradient id="icon-fx">` (or `<mask>`, `<filter>`, `<clipPath>`, etc.) and later references it via `fill="url(#icon-fx)"`. **SVG IDs are global to the document, not scoped to the component.** When the component is rendered N times, there are N elements with the same ID in the DOM. Browsers resolve `url(#icon-fx)` to the *first* one — every copy after the first renders against a definition that may not match, or whose parent was removed. Deleting the ID breaks the reference entirely; the fix is programmatic ID namespacing per instance.
 - **Static signal:** a component source file contains an inline `<svg>` with an element carrying a `id="<static-string>"` attribute AND another element in the same SVG referencing `url(#<same-static-string>)`. Literal string → very likely to collide when rendered >1 time.
 - **Detector:** not-yet-built. Candidate name: `duplicate-static-svg-id` or `svg-id-collision`.
-- **Source:** real incident — team pre-rendered all navigation menu panels for SEO; icon SVGs with hardcoded IDs (`myGrad`, etc.) collided across dozens of instances. Spent a morning debugging before the root cause was found. Fix required per-instance ID namespacing.
-- **Note:** the story also contains a meta-lesson ("be honest about why you're optimizing") — not a detector concern, but worth keeping in mind as we decide *what* we flag: some coupling exists for legitimate reasons, so findings should describe the pattern, not moralize about it.
+- **Source:** real incident — a team pre-rendered all navigation panels up front; icon SVGs with hardcoded IDs (`icon-fx` and similar) collided across dozens of instances. Spent a morning debugging before the root cause was found. Fix required per-instance ID namespacing.
+- **Note:** the story also carries a meta-lesson — the original optimization was pitched for one benefit but kept for another. Not a detector concern, but worth remembering as we decide *what* we flag: some patterns exist for legitimate reasons, so findings should describe the pattern, not moralize about it.
 
 ## P7 — Module-scope function reference used as event-handler, caught by third-party instrumentation wrapper
 
@@ -80,7 +80,7 @@ recall anchor when revisiting months later.
 - **Fix:** move the handler *inside* the setup function so every re-init produces a fresh function reference. The wrapper sees a new reference and registers it.
 - **Static signal:** a module-scope function declaration whose name is later passed (by identifier, not called) to `addEventListener` — especially inside a function that itself can be invoked multiple times (exported setup / init / hydrate functions, or called from an effect / route change handler). Noisier version: any module-scope function used as a callback passed to `addEventListener` anywhere.
 - **Detector:** not-yet-built. Candidate name: `stable-handler-reference` or `module-scope-handler`.
-- **Source:** real incident — prod-only UI deadness, hours of chasing ghosts (naming issue? race condition?), finally traced to the analytics wrapper's handler cache. Lesson captured by the team: **local correctness doesn't guarantee production success when third-party wrappers are in play.**
+- **Source:** real incident — prod-only UI deadness, hours of chasing ghosts (naming issue? race condition?), finally traced to the analytics wrapper's handler cache. Lesson captured by the team: **what works locally can silently fail in production when third-party layers change the runtime meaning of otherwise-correct code.**
 
 ## P8 — Proxy-wrapped built-in global swallows third-party writes
 
@@ -89,7 +89,7 @@ recall anchor when revisiting months later.
 - **Fix:** prefer monkey-patching *specific methods* over wholesale `Proxy` replacement of a platform global — e.g. save the original `history.pushState` reference, assign a wrapper function in its place, and leave the rest of the object untouched. If a Proxy is unavoidable, use a fully transparent `Reflect.*`-based handler that keeps `target` as the single source of truth for property storage.
 - **Static signal:** source contains an assignment replacing a platform global with a `new Proxy(...)` — `window.history = new Proxy(window.history, ...)`, `window.fetch = new Proxy(...)`, `globalThis.localStorage = new Proxy(...)`, etc. Also: any assignment `<platformHost>.<platformProp> = new Proxy(...)` where the host is a known browser global. The static check doesn't know whether the Proxy handlers are transparent — so this is recall-first / code-smell territory: flag any such replacement, let a reviewer decide.
 - **Detector:** not-yet-built. Candidate name: `proxied-platform-global` or `global-proxy-replacement`. Likely noisier than P1–P5 — intentionally. Classify as a code smell, not a guaranteed bug. The alternative is no detection at all.
-- **Source:** real incident — sticky-header feature needed per-URL configuration (sticky on some routes, off on others). On page-reload routes this worked fine. On SPA routes the author had no pushState/replaceState hook, so wrapped `window.history` in a Proxy to capture navigation. Shipped fine. Later in production, a third-party library began attaching its own keys to `window.history`; those keys were effectively lost through the proxy, breaking the page.
+- **Source:** real incident — a per-route UI feature needed to react to SPA navigation (on for some routes, off for others). On page-reload routes this worked fine. On SPA routes the author had no `pushState` / `replaceState` hook, so wrapped `window.history` in a Proxy to capture navigation. Shipped fine. Later in production, a third-party library began attaching its own keys to `window.history`; those keys were effectively lost through the proxy, breaking the page.
 - **Note:** flagged by the product owner together with P7 as "these are runtime, not static — but still log it, maybe like how SonarQube does code smells, because no existing tool will report these." That framing is now reflected in `VISION.md` as a third category of engine scope: *runtime bugs with a static signature.*
 
 ---

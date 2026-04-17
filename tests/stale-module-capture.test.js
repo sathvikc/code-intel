@@ -22,18 +22,18 @@ function parse(code, filePath = 'f.ts') {
 
 test('detects function that reads document.cookie as a reader', () => {
   const readers = extractReaders(parse(`
-    function getCookie(name) {
+    function parseCookie(name) {
       return document.cookie.match(name);
     }
   `));
-  assert.ok(readers.has('getCookie'));
+  assert.ok(readers.has('parseCookie'));
 });
 
-test('detects arrow function reader: const getCust = () => ...', () => {
+test('detects arrow function reader: const readUserId = () => ...', () => {
   const readers = extractReaders(parse(`
-    const getCust = () => document.cookie;
+    const readUserId = () => document.cookie;
   `));
-  assert.ok(readers.has('getCust'));
+  assert.ok(readers.has('readUserId'));
 });
 
 test('detects reader using sessionStorage.getItem', () => {
@@ -67,24 +67,24 @@ test('does NOT flag pure functions as readers', () => {
 
 test('detects exported function readers', () => {
   const readers = extractReaders(parse(`
-    export function getCookieValue(name) {
+    export function parseCookieValue(name) {
       return document.cookie;
     }
   `));
-  assert.ok(readers.has('getCookieValue'));
+  assert.ok(readers.has('parseCookieValue'));
 });
 
 // ---------- analyzeSource: direct-api captures ----------
 
 test('flags const X = document.cookie at module scope', () => {
   const { captures } = analyzeSource(
-    `const theCookie = document.cookie;`,
+    `const currentToken = document.cookie;`,
     'f.ts',
   );
   assert.equal(captures.length, 1);
   assert.equal(captures[0].capturedKind, 'direct-api');
   assert.equal(captures[0].capturedVia, 'document.cookie');
-  assert.equal(captures[0].name, 'theCookie');
+  assert.equal(captures[0].name, 'currentToken');
 });
 
 test('flags const X = sessionStorage.getItem(...)', () => {
@@ -135,20 +135,20 @@ test('flags within a chained expression: const X = navigator.userAgent.includes(
 
 test('flags const X = wrapperReader() where wrapper is in same file', () => {
   const { captures } = analyzeSource(
-    `function getCookie(n) { return document.cookie; }
-     const theCookie = getCookie('auth');`,
+    `function parseCookie(n) { return document.cookie; }
+     const currentToken = parseCookie('auth');`,
     'f.ts',
   );
   assert.equal(captures.length, 1);
   assert.equal(captures[0].capturedKind, 'indirect-wrapper');
-  assert.equal(captures[0].capturedVia, 'getCookie');
+  assert.equal(captures[0].capturedVia, 'parseCookie');
 });
 
 // ---------- analyzeSource: negative cases ----------
 
 test('does NOT flag module-scope arrow function literal', () => {
   const { captures } = analyzeSource(
-    `const getCookie = () => document.cookie;`,
+    `const parseCookie = () => document.cookie;`,
     'f.ts',
   );
   // The arrow IS a reader (extractReaders picks it up), but `const x = () =>
@@ -200,6 +200,7 @@ test('destructured binding also flagged, name as "<destructured>"', () => {
      const { cookie } = getInfo();`,
     'f.ts',
   );
+  // (this test intentionally retains `cookie` since it's the destructured property name)
   assert.equal(captures.length, 1);
   assert.equal(captures[0].name, '<destructured>');
   assert.equal(captures[0].capturedKind, 'indirect-wrapper');
@@ -221,28 +222,28 @@ test('integration: cross-file reader detection', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/detect.ts', `
-    export function getCustomerType() {
-      const m = document.cookie.match(/ct=([^;]+)/);
+    export function getAccountTier() {
+      const m = document.cookie.match(/tier=([^;]+)/);
       return m ? m[1] : 'unknown';
     }
   `);
-  write(a, 'src/greeting.ts', `
-    import { getCustomerType } from './detect';
-    const customerType = getCustomerType();
-    export function render() { return customerType; }
+  write(a, 'src/render.ts', `
+    import { getAccountTier } from './detect';
+    const accountTier = getAccountTier();
+    export function render() { return accountTier; }
   `);
 
   const result = analyzeProjects([a]);
   assert.equal(result.version, SCHEMA_VERSION);
   assert.equal(result.analyzer, ANALYZER_ID);
-  assert.ok(result.meta.detectedReaders.includes('getCustomerType'));
+  assert.ok(result.meta.detectedReaders.includes('getAccountTier'));
   assert.equal(result.findings.length, 1);
   const f = result.findings[0];
   assert.equal(f.kind, 'stale-module-capture');
-  assert.equal(f.name, 'customerType');
+  assert.equal(f.name, 'accountTier');
   assert.equal(f.capturedKind, 'indirect-wrapper');
-  assert.equal(f.capturedVia, 'getCustomerType');
-  assert.equal(f.occurrences[0].file, 'src/greeting.ts');
+  assert.equal(f.capturedVia, 'getAccountTier');
+  assert.equal(f.occurrences[0].file, 'src/render.ts');
 });
 
 test('integration: multiple captures across multiple files', () => {

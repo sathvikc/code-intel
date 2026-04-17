@@ -28,7 +28,7 @@ numbers — the Q slot is left empty in history).
 
 ## Q1 — Aliased storage bindings
 
-`const s = window.localStorage; s.setItem('auth.token', v);`
+`const s = window.localStorage; s.setItem('app.session', v);`
 
 **Why it matters:** Real code aliases the storage object into a local
 variable. The current analyzer only resolves `localStorage`, `sessionStorage`,
@@ -47,7 +47,7 @@ version first.
 
 ## Q2 — Wrapper modules
 
-`import { storage } from './utils'; storage.set('auth.token', v);`
+`import { storage } from './utils'; storage.set('app.session', v);`
 
 **Why it matters:** Many codebases wrap storage behind a thin utility
 module (`storage.ts`, `cache.ts`, `persist.ts`). The analyzer sees method
@@ -156,7 +156,7 @@ Also decide: one MCP tool per analyzer, or one unified `query` tool.
 
 ## Q8 — Dynamic key constant-folding
 
-`const K = 'auth.token'; localStorage.setItem(K, v);`
+`const K = 'app.session'; localStorage.setItem(K, v);`
 
 **Why it matters:** Many codebases declare keys as constants and reuse
 them. Flagging these as `dynamic: true` is technically correct but
@@ -210,7 +210,7 @@ guessing.
 
 ## Q11 — Third-party pub/sub libraries
 
-`import mitt from 'mitt'; const bus = mitt(); bus.emit('user:updated'); bus.on('user:updated', …);`
+`import mitt from 'mitt'; const bus = mitt(); bus.emit('profile:changed'); bus.on('profile:changed', …);`
 
 **Why it matters:** The `shared-event-channel` analyzer detects native
 `window.dispatchEvent` / `addEventListener` coupling, but many codebases

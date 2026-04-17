@@ -105,13 +105,13 @@ test('detects delete window.X as remove', () => {
 
 test('classic script: top-level function X() is detected as declare', () => {
   const { isModule, occurrences } = analyzeSource(
-    `function getCookie(name) { return null; }`,
+    `function parseCookie(name) { return null; }`,
     'f.js',
   );
   assert.equal(isModule, false);
   assert.equal(occurrences.length, 1);
   assert.equal(occurrences[0].op, 'declare');
-  assert.equal(occurrences[0].name, 'getCookie');
+  assert.equal(occurrences[0].name, 'parseCookie');
   assert.equal(occurrences[0].detectedVia, 'classic-script-function');
   assert.equal(occurrences[0].host, 'global');
 });
@@ -202,13 +202,13 @@ test('integration: single-file self-declaration emits NO finding', () => {
 test('integration: same name declared in two files -> one finding with 2 occurrences', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/a.js', `function getCookie(n) { return 'a'; }`);
-  write(a, 'src/b.js', `function getCookie(n) { return 'b'; }`);
+  write(a, 'src/a.js', `function parseCookie(n) { return 'a'; }`);
+  write(a, 'src/b.js', `function parseCookie(n) { return 'b'; }`);
   const result = analyzeProjects([a]);
   assert.equal(result.findings.length, 1);
   const f = result.findings[0];
   assert.equal(f.kind, 'shared-global-binding');
-  assert.equal(f.name, 'getCookie');
+  assert.equal(f.name, 'parseCookie');
   assert.equal(f.occurrences.length, 2);
   assert.deepEqual(f.occurrences.map(o => o.file).sort(), ['src/a.js', 'src/b.js']);
 });
@@ -216,31 +216,31 @@ test('integration: same name declared in two files -> one finding with 2 occurre
 test('integration: cross-project collision (app-a and app-b)', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
-  write(a, 'src/cookies.js', `function getCookie(n) { return 'a'; }`);
+  write(a, 'src/cookies.js', `function parseCookie(n) { return 'a'; }`);
 
   const b = mktmp();
   write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
-  write(b, 'src/cookies.js', `function getCookie(n) { return 'b'; }`);
+  write(b, 'src/cookies.js', `function parseCookie(n) { return 'b'; }`);
 
   const result = analyzeProjects([a, b]);
   assert.equal(result.findings.length, 1);
   const f = result.findings[0];
-  assert.equal(f.name, 'getCookie');
+  assert.equal(f.name, 'parseCookie');
   assert.equal(f.occurrences.length, 2);
   const projs = new Set(f.occurrences.map(o => o.project));
   assert.deepEqual([...projs].sort(), ['app-a', 'app-b']);
 });
 
 test('integration: module-script + classic-script same-named do NOT group together', () => {
-  // app-a exports function getCookie (module -> not a global)
-  // app-b has classic getCookie (global). Only 1 occurrence total -> no finding.
+  // app-a exports function parseCookie (module -> not a global)
+  // app-b has classic parseCookie (global). Only 1 occurrence total -> no finding.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
-  write(a, 'src/cookies.ts', `export function getCookie(n) { return 'a'; }`);
+  write(a, 'src/cookies.ts', `export function parseCookie(n) { return 'a'; }`);
 
   const b = mktmp();
   write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
-  write(b, 'src/cookies.js', `function getCookie(n) { return 'b'; }`);
+  write(b, 'src/cookies.js', `function parseCookie(n) { return 'b'; }`);
 
   const result = analyzeProjects([a, b]);
   assert.equal(result.findings.length, 0);
@@ -249,17 +249,17 @@ test('integration: module-script + classic-script same-named do NOT group togeth
 test('integration: explicit window.X write + classic-script declare collide', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
-  write(a, 'src/cookies.js', `function getCookie(n) { return 'a'; }`);
+  write(a, 'src/cookies.js', `function parseCookie(n) { return 'a'; }`);
 
   const b = mktmp();
   write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
   write(b, 'src/setup.ts', `import x from 'x';
-    window.getCookie = function(n) { return 'b'; };`);
+    window.parseCookie = function(n) { return 'b'; };`);
 
   const result = analyzeProjects([a, b]);
   assert.equal(result.findings.length, 1);
   const f = result.findings[0];
-  assert.equal(f.name, 'getCookie');
+  assert.equal(f.name, 'parseCookie');
   assert.equal(f.occurrences.length, 2);
   const ops = f.occurrences.map(o => o.op).sort();
   assert.deepEqual(ops, ['assign', 'declare']);

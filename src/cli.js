@@ -76,7 +76,7 @@ const USAGE = `Usage:
 Subcommands:
   shared-state    Detect localStorage / sessionStorage key coupling.
   shared-events   Detect window / globalThis CustomEvent coupling.
-  shared-globals  Detect cross-script global-binding collisions (e.g. two files defining window.getCookie).
+  shared-globals  Detect cross-script global-binding collisions (e.g. two files defining the same top-level helper on window).
   stale-captures  Detect module-scope captures of dynamic sources (cookie / storage / DOM / navigator / fetch frozen at import time).
 
 Args:

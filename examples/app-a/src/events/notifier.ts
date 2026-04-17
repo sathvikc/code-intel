@@ -1,14 +1,14 @@
-// notifier.ts — app-a publishes user updates on the window event bus.
+// notifier.ts — app-a publishes profile changes on the window event bus.
 //
-// Couples implicitly with app-b/src/listener.ts via the 'user:updated'
+// Couples implicitly with app-b/src/listener.ts via the 'profile:changed'
 // CustomEvent name. No shared imports; the apps ship independently and
 // meet only at runtime in the browser.
 
-export interface UserDelta {
+export interface ProfileDelta {
   id: string;
   fields: Record<string, unknown>;
 }
 
-export function notifyUserUpdated(delta: UserDelta): void {
-  window.dispatchEvent(new CustomEvent('user:updated', { detail: delta }));
+export function notifyProfileChanged(delta: ProfileDelta): void {
+  window.dispatchEvent(new CustomEvent('profile:changed', { detail: delta }));
 }

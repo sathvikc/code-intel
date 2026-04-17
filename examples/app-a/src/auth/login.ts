@@ -1,6 +1,6 @@
 // login.ts — signs in and stashes the auth token.
 //
-// Couples implicitly with api-client.ts via the 'auth.token' key. No import
+// Couples implicitly with api-client.ts via the 'app.session' key. No import
 // links the two files; renaming the string here breaks the api client
 // silently at runtime.
 
@@ -10,9 +10,9 @@ export async function login(username: string, password: string): Promise<void> {
     body: JSON.stringify({ username, password }),
   });
   const { token } = await res.json();
-  localStorage.setItem('auth.token', token);
+  localStorage.setItem('app.session', token);
 }
 
 export function logout(): void {
-  localStorage.removeItem('auth.token');
+  localStorage.removeItem('app.session');
 }
