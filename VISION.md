@@ -87,12 +87,15 @@ report, one CI step, one MCP surface.
 
 ```
 code-intel
-  ├─ engine:       shared-state, stale-captures, change-coupling   ← we own
-  ├─ knip:         dead code                                       ← shelled out
-  ├─ biome:        lint + complexity + security patterns           ← shelled out
-  └─ depcruiser:   circular deps                                   ← shelled out
+  ├─ engine:        shared-state, shared-events, shared-globals,        ← we own
+  │                 stale-captures, (+ planned detectors per PATTERNS.md)
+  ├─ orchestrator:  impact command → unified markdown / JSON report     ← we own
+  ├─ import-graph:  blast radius from --since <ref>                     ← we own
+  ├─ knip:          dead code                                           ← planned shell-out
+  ├─ biome:         lint + complexity + security patterns               ← planned shell-out
+  └─ depcruiser:    circular deps                                       ← planned shell-out
   ─────────────────────────────────────────────────────────────
-  → unified JSON · unified terminal report · single MCP surface
+  → unified JSON · markdown report · (MCP surface — planned)
 ```
 
 If a sub-tool is missing, we degrade gracefully and tell the user what's skipped.
