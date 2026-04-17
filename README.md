@@ -140,9 +140,9 @@ Each of those fixtures reproduces a real production bug. See [`examples/README.m
 
 ## Status
 
-Early. Pre-1.0. Four detectors tested and dogfooded against fixtures that reproduce real incidents. Eight patterns logged, four more to build. The JSON schema is a working contract, not a stable one. There's no configuration file, no suppression syntax, no MCP server yet — those are backlog items, not promises.
+Early. Pre-1.0. Four detectors plus the `impact` orchestrator (with import-graph blast radius and `--since <ref>` diff-awareness) tested and dogfooded against fixtures that reproduce real incidents. Nine patterns logged, four more detectors to build. The JSON schema is a working contract, not a stable one. There's no configuration file, no suppression syntax, no MCP server yet — those are backlog items, not promises.
 
-This README is a **snapshot** of the project as of version `0.7.x`. It will be rewritten as the catalogue grows and the scope becomes clearer — consider it supersedable in the same sense that [`DESIGN_DECISIONS.md`](./DESIGN_DECISIONS.md) entries can be superseded by later ones. Git history is the timeline; this file is always *now*.
+This README is a **snapshot** of the project as of version `0.8.x`. It will be rewritten as the catalogue grows and the scope becomes clearer — consider it supersedable in the same sense that [`DESIGN_DECISIONS.md`](./DESIGN_DECISIONS.md) entries can be superseded by later ones. Git history is the timeline; this file is always *now*.
 
 ## Read more
 
