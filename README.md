@@ -119,6 +119,10 @@ Each path is treated as an independent project. Findings are grouped across all 
 Try it against the consolidated example apps in the repo:
 
 ```bash
+# Unified impact report — primary entry point, markdown output
+node src/cli.js impact          examples/app-a examples/app-b --markdown
+
+# Individual detectors — JSON, one signal at a time
 node src/cli.js shared-state    examples/app-a examples/app-b --pretty
 node src/cli.js shared-events   examples/app-a examples/app-b --pretty
 node src/cli.js shared-globals  examples/app-a examples/app-b --pretty
