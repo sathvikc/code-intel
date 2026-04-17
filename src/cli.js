@@ -11,6 +11,7 @@
 import * as webStorage from './shared-state-web-storage.js';
 import * as events from './shared-state-events.js';
 import * as globals from './shared-state-globals.js';
+import * as staleCapture from './stale-module-capture.js';
 
 const COMMANDS = {
   'shared-state': {
@@ -53,17 +54,30 @@ const COMMANDS = {
       `cross-file:      ${s.crossFile}`,
     ],
   },
+  'stale-captures': {
+    analyzer: staleCapture,
+    summarize: (s) => [
+      `code-intel / stale-module-capture`,
+      `projects:           ${s.projectCount}`,
+      `findings:           ${s.findingCount}`,
+      `  direct-api:       ${s.byCapturedKind['direct-api'] ?? 0}`,
+      `  indirect-wrapper: ${s.byCapturedKind['indirect-wrapper'] ?? 0}`,
+      `auto-detected readers: ${s.detectedReaders}`,
+    ],
+  },
 };
 
 const USAGE = `Usage:
-  code-intel shared-state   [paths...] [--pretty]
-  code-intel shared-events  [paths...] [--pretty]
-  code-intel shared-globals [paths...] [--pretty]
+  code-intel shared-state    [paths...] [--pretty]
+  code-intel shared-events   [paths...] [--pretty]
+  code-intel shared-globals  [paths...] [--pretty]
+  code-intel stale-captures  [paths...] [--pretty]
 
 Subcommands:
   shared-state    Detect localStorage / sessionStorage key coupling.
   shared-events   Detect window / globalThis CustomEvent coupling.
   shared-globals  Detect cross-script global-binding collisions (e.g. two files defining window.getCookie).
+  stale-captures  Detect module-scope captures of dynamic sources (cookie / storage / DOM / navigator / fetch frozen at import time).
 
 Args:
   paths          One or more project roots. Defaults to "." if omitted.
