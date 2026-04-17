@@ -90,13 +90,11 @@ The catalogue grows whenever a new production bug is dumped into `PATTERNS.md`. 
 
 ## Output
 
-JSON to stdout, human-readable summary to stderr. Every finding carries:
+The `impact` command emits a unified report with top-level fields `meta`, `summary`, `findings`, `graph`, and `integrations`. Each finding carries `id`, `kind`, `severity` (heuristic, not measured), `message`, `detail` (analyzer-specific payload), `relatedFiles`, and `touchesChange` (when a change set was given via `--since`). The `graph.blastRadius[]` section lists every file that transitively imports a changed file, with `{ file, project, depth }`.
 
-- `kind` — the detector's pattern class (e.g. `shared-storage-key`, `stale-module-capture`).
-- `name` — the key, event channel, global, or binding involved.
-- `occurrences[]` — each site: project id, file (relative), line, column, the operation (`read` / `write` / `declare` / `dispatch` / `listen` / `assign` / …), a source snippet, and a `detectedVia` tag describing the exact syntactic pattern matched (`bracket-access`, `indexed-access`, `classic-script-function`, `direct-api`, `indirect-wrapper`, etc.).
+Per-analyzer commands (`shared-state`, `shared-events`, `shared-globals`, `stale-captures`) emit their native shape: a `findings[]` array where each finding has `kind`, a key/channel/name field, and `occurrences[]` with project, file, line, column, op, snippet, and `detectedVia` (the exact syntactic pattern matched — `bracket-access`, `indexed-access`, `classic-script-function`, `direct-api`, `indirect-wrapper`, etc.).
 
-The schema is designed to be read by an AI agent first and a human second. It's pre-1.0 and will stabilize once enough detectors exist to know what's common vs detector-specific (see `BACKLOG.md` → `SCHEMA.md`).
+The schema is pre-1.0. Designed for AI-agent consumption first, humans second, and will stabilize as the catalogue grows — see `BACKLOG.md` → `SCHEMA.md`.
 
 ## Running it
 
