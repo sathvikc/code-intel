@@ -10,6 +10,7 @@
 
 import * as webStorage from './shared-state-web-storage.js';
 import * as events from './shared-state-events.js';
+import * as globals from './shared-state-globals.js';
 
 const COMMANDS = {
   'shared-state': {
@@ -39,15 +40,30 @@ const COMMANDS = {
       `dynamic channels:${s.dynamic}`,
     ],
   },
+  'shared-globals': {
+    analyzer: globals,
+    summarize: (s) => [
+      `code-intel / shared-state.globals`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  declare:       ${s.byOp.declare ?? 0}`,
+      `  assign:        ${s.byOp.assign ?? 0}`,
+      `  remove:        ${s.byOp.remove ?? 0}`,
+      `cross-project:   ${s.crossProject}`,
+      `cross-file:      ${s.crossFile}`,
+    ],
+  },
 };
 
 const USAGE = `Usage:
-  code-intel shared-state  [paths...] [--pretty]
-  code-intel shared-events [paths...] [--pretty]
+  code-intel shared-state   [paths...] [--pretty]
+  code-intel shared-events  [paths...] [--pretty]
+  code-intel shared-globals [paths...] [--pretty]
 
 Subcommands:
-  shared-state   Detect localStorage / sessionStorage key coupling.
-  shared-events  Detect window / globalThis CustomEvent coupling.
+  shared-state    Detect localStorage / sessionStorage key coupling.
+  shared-events   Detect window / globalThis CustomEvent coupling.
+  shared-globals  Detect cross-script global-binding collisions (e.g. two files defining window.getCookie).
 
 Args:
   paths          One or more project roots. Defaults to "." if omitted.
