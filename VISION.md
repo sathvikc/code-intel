@@ -170,8 +170,12 @@ Every feature request gets run through this gate:
   versioned, documented, and designed for machine reasoning first.
 - **Honest precision.** We publish a benchmark corpus with recall/precision
   numbers on our novel analyzers. No accuracy claims without evidence.
-- **Small dependency surface.** TypeScript compiler API, node built-ins, and
-  whatever sub-tools the user already has. That's it.
+- **Small dependency surface, pragmatic not dogmatic.** Today: only the
+  TypeScript compiler API and Node built-ins. This keeps installation fast
+  and the tool easy to clear through enterprise security review, where
+  some teams run on tight allow-lists. If a popular, well-maintained
+  dependency later makes a capability materially better, adding it is a
+  decision on the merits — not a rule we break.
 
 ---
 
