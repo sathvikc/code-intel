@@ -11,10 +11,18 @@ links to it with `(see Q<N>)`.
 
 ## Analyzers
 
-- [ ] `shared-event-channel` (CustomEvent / addEventListener / dispatchEvent) — **next up**
+Shipped (also listed for cross-reference with `PATTERNS.md`):
+- [x] `shared-state` — web storage key coupling (covers P1, partial P4)
+- [x] `shared-events` — CustomEvent / addEventListener / dispatchEvent (P2)
+- [x] `shared-globals` — classic-script / `window.*` collisions (P3)
+- [x] `stale-captures` — stale module-scope capture of dynamic sources (P5)
+
+Planned:
+- [ ] `duplicate-static-svg-id` — hardcoded SVG IDs in multi-rendered components (see P6)
+- [ ] `module-scope-handler` — module-scope fn passed by name to `addEventListener` inside a re-runnable setup (see P7)
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
-- [ ] Global namespace pollution (`window.APP = …`, `globalThis.*`)
+- [ ] Shape-drift on shared storage keys (completes P4 — key agreement detected, shape mismatch not yet)
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 
 ## Infrastructure
