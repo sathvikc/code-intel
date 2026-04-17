@@ -16,6 +16,8 @@ Shipped (also listed for cross-reference with `PATTERNS.md`):
 - [x] `shared-events` — CustomEvent / addEventListener / dispatchEvent (P2)
 - [x] `shared-globals` — classic-script / `window.*` collisions (P3)
 - [x] `stale-captures` — stale module-scope capture of dynamic sources (P5)
+- [x] `impact` — unified orchestrator: runs all detectors, adds `--since <ref>` diff-awareness, blast-radius via import graph, markdown + JSON reporters
+- [x] import-graph — AST-based reverse import graph + BFS blast-radius traversal
 
 Planned:
 - [ ] `duplicate-static-svg-id` — hardcoded SVG IDs in multi-rendered components (see P6)
@@ -28,11 +30,14 @@ Planned:
 
 ## Infrastructure
 
-- [ ] MCP server POC — expose `analyzeProjects` as an MCP tool (see Q7)
+- [ ] MCP server POC — expose `impact.analyzeProjects` as an MCP tool (see Q7)
 - [ ] Configuration file format (see Q3)
 - [ ] Inline suppression comments (see Q5)
 - [ ] Dynamic key constant-folding, same-file only (see Q8)
 - [ ] Wrapper-module detection (see Q2)
+- [ ] Content-hash cache for AST parses (target <1s warm scan, per CODE-INTEL.md)
+- [ ] Nx integration — `npx nx show projects --affected` overlay on blast radius
+- [ ] Risk score (0–100) per finding and per report
 
 ## Orchestration (commodity tools)
 

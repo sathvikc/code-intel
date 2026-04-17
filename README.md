@@ -14,7 +14,28 @@ Then, in production, something subtle breaks:
 
 These are the bugs **code-intel** is built to find. Every pattern it detects started as a real incident — logged in [`PATTERNS.md`](./PATTERNS.md), then turned into a detector. No theoretical taxonomy, no best-practice posturing. Just: the things that actually shipped and broke.
 
-No CI setup. No cloud dashboard. No daemon. Point it at one or more project directories; get a JSON report of the coupling, captures, collisions, and code smells that every other tool you have is blind to.
+No CI setup. No cloud dashboard. No daemon. Point it at one or more project directories; get a JSON or markdown report of the coupling, captures, collisions, and code smells that every other tool you have is blind to.
+
+---
+
+## The primary entry point
+
+```bash
+# Scan one or more projects; aggregate all detectors into one report.
+code-intel impact path/to/project [more-paths...] --markdown
+
+# Same, but scoped to a PR / branch: findings that touch changed files are
+# surfaced first, and the import-graph blast radius of those files is
+# computed and included.
+code-intel impact path/to/project --since main --markdown
+
+# Emit the unified JSON schema for an AI agent / CI pipeline to consume.
+code-intel impact path/to/project --since main --json
+```
+
+The `impact` command is designed to answer *"what did this change put at risk?"* — not *"list every pattern in this repo."* It runs all four detectors below in one pass, annotates each finding with `touchesChange` when a change set is given, sorts change-touching findings first, and includes the transitive import-graph blast radius of the changed files.
+
+Per-analyzer commands remain available when you want one signal in isolation.
 
 ---
 

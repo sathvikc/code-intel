@@ -61,8 +61,15 @@ source. Detection for these is recall-first and noisier (closer to how
 SonarQube flags "code smells"), because the alternative is no detection at
 all: these are bugs that *no existing tool* reports.
 
+The engine ships with a unified `impact` command that runs every detector
+in one pass and — given a git base ref via `--since` — filters / sorts
+findings by what intersects the change set, plus computes the transitive
+import-graph blast radius of the changed files. See `README.md` for usage
+and the unified JSON schema (`meta` / `summary` / `findings` / `graph` /
+`integrations`).
+
 Orthogonal engine capabilities (planned): change-coupling from git history,
-blast-radius queries across the implicit graph.
+incremental cache for sub-second warm scans, richer blast-radius queries.
 
 This is the code we own, the problem we uniquely solve, and the reason the
 tool exists.
