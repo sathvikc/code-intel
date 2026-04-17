@@ -176,8 +176,9 @@ Every feature request gets run through this gate:
   installed, partial type info — skip cleanly, tell the user, keep going.
 - **AI-native output contract.** The JSON schema is a real API. It's stable,
   versioned, documented, and designed for machine reasoning first.
-- **Honest precision.** We publish a benchmark corpus with recall/precision
-  numbers on our novel analyzers. No accuracy claims without evidence.
+- **Honest precision (planned).** A benchmark corpus with recall/precision
+  numbers on our novel analyzers is intended but not yet built. Until it
+  exists, accuracy claims are explicitly flagged as heuristic, not measured.
 - **Small dependency surface, pragmatic not dogmatic.** Today: only the
   TypeScript compiler API and Node built-ins. This keeps installation fast
   and the tool easy to clear through enterprise security review, where
