@@ -1,0 +1,14 @@
+# OS / editor noise
+.DS_Store
+*.log
+
+# Node
+node_modules/
+.tsbuildinfo
+.cache/
+dist/
+
+# AI / agent-local files — single-maintainer project, these stay out of git
+CLAUDE.md
+.claude/
+.clauderc

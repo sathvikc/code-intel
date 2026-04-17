@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Validates Angular commit convention for any `git commit` (including tools that
+# bypass scripts/commit.sh). It does NOT bump the version — use scripts/commit.sh
+# for the full flow (validate + test + bump + commit).
+
+set -eu
+
+MSG_FILE="$1"
+HEADER=$(head -1 "$MSG_FILE")
+
+# Allow merge / revert / fixup commits without convention
+case "$HEADER" in
+  "Merge "*|"Revert "*|"fixup!"*|"squash!"*) exit 0 ;;
+esac
+
+REGEX='^(feat|fix|perf|refactor|docs|style|test|build|ci|chore|revert)(\([^)]+\))?!?: .+'
+
+if ! echo "$HEADER" | grep -Eq "$REGEX"; then
+  cat >&2 <<EOF
+
+ERROR: Commit message must follow Angular convention:
+  <type>(<optional-scope>)?!?: <subject>
+
+Types: feat, fix, perf, refactor, docs, style, test, build, ci, chore, revert
+
+Got:
+  $HEADER
+
+Tip: run   scripts/commit.sh "type: subject"
+     to auto-bump the version and run tests.
+
+EOF
+  exit 1
+fi
