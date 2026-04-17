@@ -92,6 +92,30 @@ recall anchor when revisiting months later.
 - **Source:** real incident — a per-route UI feature needed to react to SPA navigation (on for some routes, off for others). On page-reload routes this worked fine. On SPA routes the author had no `pushState` / `replaceState` hook, so wrapped `window.history` in a Proxy to capture navigation. Shipped fine. Later in production, a third-party library began attaching its own keys to `window.history`; those keys were effectively lost through the proxy, breaking the page.
 - **Note:** flagged by the product owner together with P7 as "these are runtime, not static — but still log it, maybe like how SonarQube does code smells, because no existing tool will report these." That framing is now reflected in `VISION.md` as a third category of engine scope: *runtime bugs with a static signature.*
 
+## P9 — Shape drift across a shared cross-file channel
+
+- **Symptoms:** one file writes a value; another file reads it expecting a different shape. Reads come back `undefined`, crash on property access, silently use stale field names, or misinterpret values. The two files compile, lint, and type-check fine; the divergence is invisible until runtime — often only on specific user flows where the changed field is actually read. Canonical example: writer stored `{ name }`, refactored to `{ firstName, lastName }`; every reader that depended on `user.name` silently got `undefined`. The refactor PR was clean, types were green, tests passed, broken in prod.
+- **Root cause:** one side of a cross-file contract changes shape (field split, renamed, nested, removed, type-changed) without the other side updating in lockstep. The channel — `localStorage` / `sessionStorage` value, cookie body, `CustomEvent.detail`, URL param blob, any string-keyed shared state — is **opaque to the type system** because it crosses a `JSON.stringify` / `JSON.parse` / storage boundary that TypeScript doesn't propagate through. Even in fully-typed codebases, `storage.getItem(k)` returns `string | null`; the shape contract lives in the code, not the types.
+- **Static signal (tractable slice, recall-first):**
+  - **Write side:** an object literal inside a known serialisation / dispatch wrapper. Extract the top-level key set.
+    - `localStorage.setItem(k, JSON.stringify({ a, b, c }))` → write shape `{a, b, c}` on key `k`.
+    - `document.cookie = k + '=' + JSON.stringify({ ... })` → write shape on cookie `k`.
+    - `dispatchEvent(new CustomEvent(n, { detail: { ... } }))` → write shape on channel `n`.
+  - **Read side:** property access or destructuring on the parsed value. Extract the access set.
+    - `JSON.parse(localStorage.getItem(k)).firstName` → read shape `{firstName}` on key `k`.
+    - `const { name, age } = JSON.parse(...)` → read shape `{name, age}`.
+  - **Disagreement check:** for each channel (key, event name, etc.) where both sides were detected, flag if the reader accesses a field the writer never writes, or if the writer writes a field no reader accesses (weaker signal, but surfaces dead shape).
+- **What this will NOT catch in v1 (recall gaps, logged honestly — per D2 we ship the slice anyway):**
+  - Shapes that flow through helper functions or many reassignments — cross-function shape propagation without type info is hard.
+  - Object-spread writes `JSON.stringify({ ...prev, x })` where `prev` is resolved cross-file.
+  - Dynamic property reads `result[key]`.
+  - Nested-field changes — v1 is top-level keys only. `user.address.street` → `user.addressLine1` is a v2 problem.
+  - Writes whose RHS is an opaque variable sourced from an API response the analyzer can't see.
+  - Wrapper modules: `storage.set('user', data)` where the literal shape was lost in a helper (see Q2).
+- **Detector:** not-yet-built. Candidate name: `shape-drift`. Builds on `shared-state` and `shared-events` — reuses their channel detection, adds a shape extractor on both sides and a comparator.
+- **Source:** generalised by the product owner from the specific case "writer stored `{ name }`, refactored to `{ firstName, lastName }`, readers across the codebase broke silently." Applies to any cross-file channel, not just storage.
+- **Note:** deliberately syntactic (D5). The TypeScript type system does not see across `JSON.parse` / storage / cookie / event boundaries, even in fully-typed codebases. A realistic shape-drift detector must derive shape summaries from the source code itself, not from types. This is also why no existing tool catches this — they either stop at the type layer, or they don't look at shapes at all.
+
 ---
 
 ## Adding a new entry

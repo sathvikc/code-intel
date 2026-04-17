@@ -23,7 +23,7 @@ Planned:
 - [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
-- [ ] Shape-drift on shared storage keys (completes P4 — key agreement detected, shape mismatch not yet)
+- [ ] `shape-drift` — compare write-shape vs read-shape across any shared channel (storage / cookies / events / URL); completes P4 (storage case) and addresses P9 broadly
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 
 ## Infrastructure
