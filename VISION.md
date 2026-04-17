@@ -161,6 +161,13 @@ Every feature request gets run through this gate:
 
 ## Design Principles
 
+- **Recall over precision — find it at whatever tier we can.** If we can
+  detect a pattern perfectly, we do. If we can only identify it partially,
+  we still surface it. If we can only flag "you changed a shared channel —
+  go validate it touches the other sites," that is still worth shipping.
+  Missing a real bug is worse than surfacing a false one: false positives
+  cost minutes of a reviewer's time; missed bugs cost production incidents.
+  Consumers (human or AI) are the filter; we are the net.
 - **Zero-config by default, fully configurable when needed.** `code-intel`
   works on any JS/TS repo with no setup. Every behavior is also exposed as a
   config key and a CLI flag, so power users and AI agents can invoke it
