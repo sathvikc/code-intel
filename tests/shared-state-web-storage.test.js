@@ -88,6 +88,128 @@ test('parses tsx without crashing', () => {
   assert.equal(occ.length, 2);
 });
 
+// ---------- detectedVia metadata (D4) ----------
+
+test('method-call detections carry detectedVia: "method-call"', () => {
+  const occ = analyzeSource(`localStorage.setItem('k', v);`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].detectedVia, 'method-call');
+});
+
+// ---------- indexed access (D4 / new pattern) ----------
+
+test('indexed write with string literal', () => {
+  const occ = analyzeSource(`localStorage['auth.token'] = token;`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].op, 'write');
+  assert.equal(occ[0].key, 'auth.token');
+  assert.equal(occ[0].detectedVia, 'indexed-access');
+  assert.equal(occ[0].dynamic, false);
+});
+
+test('indexed read with string literal', () => {
+  const occ = analyzeSource(`const t = localStorage['auth.token'];`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].op, 'read');
+  assert.equal(occ[0].key, 'auth.token');
+  assert.equal(occ[0].detectedVia, 'indexed-access');
+});
+
+test('delete on indexed access → remove with detectedVia "delete"', () => {
+  const occ = analyzeSource(`delete localStorage['auth.token'];`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].op, 'remove');
+  assert.equal(occ[0].detectedVia, 'delete');
+});
+
+test('window.localStorage[...] resolves through indexed access', () => {
+  const occ = analyzeSource(`window.localStorage['k'] = 1;`, 'f.js');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].storage, 'localStorage');
+  assert.equal(occ[0].op, 'write');
+  assert.equal(occ[0].detectedVia, 'indexed-access');
+});
+
+test('dynamic indexed access flags dynamic', () => {
+  const occ = analyzeSource(`localStorage[someVar] = 1;`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].dynamic, true);
+  assert.equal(occ[0].key, null);
+  assert.equal(occ[0].detectedVia, 'indexed-access');
+});
+
+test('compound assignment emits read and write at same site (D7)', () => {
+  const occ = analyzeSource(`localStorage['k'] += '!';`, 'f.ts');
+  assert.equal(occ.length, 2);
+  const ops = occ.map(o => o.op).sort();
+  assert.deepEqual(ops, ['read', 'write']);
+  assert.ok(occ.every(o => o.line === 1));
+  assert.ok(occ.every(o => o.detectedVia === 'indexed-access'));
+});
+
+// ---------- property (dot) access (D6) ----------
+
+test('dot-access write → detectedVia "property-access"', () => {
+  const occ = analyzeSource(`localStorage.authToken = token;`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].op, 'write');
+  assert.equal(occ[0].key, 'authToken');
+  assert.equal(occ[0].detectedVia, 'property-access');
+  assert.equal(occ[0].dynamic, false);
+});
+
+test('dot-access read → detectedVia "property-access"', () => {
+  const occ = analyzeSource(`const x = localStorage.authToken;`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].op, 'read');
+  assert.equal(occ[0].key, 'authToken');
+  assert.equal(occ[0].detectedVia, 'property-access');
+});
+
+test('method reference (no call) is NOT detected as property access', () => {
+  // `localStorage.setItem` used as a value, not a call. D6 whitelist skips it.
+  const occ = analyzeSource(`const fn = localStorage.setItem;`, 'f.ts');
+  assert.equal(occ.length, 0);
+});
+
+test('meta-property reads (length, key) are not detected as user keys', () => {
+  const occ = analyzeSource(`const n = localStorage.length;`, 'f.ts');
+  assert.equal(occ.length, 0);
+});
+
+test('delete on dot access → remove with detectedVia "delete"', () => {
+  const occ = analyzeSource(`delete localStorage.authToken;`, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].op, 'remove');
+  assert.equal(occ[0].key, 'authToken');
+  assert.equal(occ[0].detectedVia, 'delete');
+});
+
+// ---------- cross-style grouping ----------
+
+test('method-call, indexed, and property access merge into one finding per key', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/one.ts', `localStorage.setItem('shared.key', 1);`);
+  write(a, 'src/two.ts', `const v = localStorage['shared.key'];`);
+  write(a, 'src/three.ts', `const w = localStorage.sharedKeyAlt;`); // different key name
+  write(a, 'src/four.ts', `localStorage.sharedKeyAlt = 2;`);
+
+  const result = analyzeProjects([a]);
+  const finding1 = result.findings.find(f => f.key === 'shared.key');
+  const finding2 = result.findings.find(f => f.key === 'sharedKeyAlt');
+
+  assert.ok(finding1, 'finding for shared.key');
+  assert.equal(finding1.occurrences.length, 2);
+  const via1 = finding1.occurrences.map(o => o.detectedVia).sort();
+  assert.deepEqual(via1, ['indexed-access', 'method-call']);
+
+  assert.ok(finding2, 'finding for sharedKeyAlt');
+  assert.equal(finding2.occurrences.length, 2);
+  const via2 = finding2.occurrences.map(o => o.detectedVia).sort();
+  assert.deepEqual(via2, ['property-access', 'property-access']);
+});
+
 // ---------- analyzeProjects (integration, tmp fs) ----------
 
 function mktmp() {

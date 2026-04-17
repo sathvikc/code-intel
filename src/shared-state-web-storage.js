@@ -24,6 +24,33 @@ const METHOD_OPS = {
   removeItem: 'remove',
 };
 
+// Storage API members. Dot-access on these names is a method reference or a
+// meta-property read (e.g. `localStorage.length`), not a user-defined key.
+// See D6 in DESIGN_DECISIONS.md.
+const STORAGE_API_MEMBERS = new Set([
+  'setItem', 'getItem', 'removeItem', 'clear', 'key', 'length',
+]);
+
+// SyntaxKinds of compound-assignment operators. Per D7, a compound assignment
+// on a storage element access emits both a read and a write occurrence.
+const COMPOUND_ASSIGNMENT_KINDS = new Set([
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+]);
+
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
 const IGNORED_DIRS = new Set([
   'node_modules', 'dist', 'build', '.git', 'coverage', '.next', '.turbo', '.cache',
@@ -98,8 +125,8 @@ function storageNameOf(node) {
 }
 
 /**
- * Extract a key from the first argument of a storage method call.
- * Returns { key: string|null, dynamic: boolean, expressionText: string }.
+ * Extract a key from a key-bearing node (method call arg or element-access
+ * argumentExpression). Returns { key, dynamic, expressionText }.
  */
 function extractKey(argNode, sourceFile) {
   if (!argNode) return { key: null, dynamic: true, expressionText: '' };
@@ -108,6 +135,27 @@ function extractKey(argNode, sourceFile) {
   }
   const text = argNode.getText(sourceFile);
   return { key: null, dynamic: true, expressionText: text };
+}
+
+/**
+ * Classify the operation(s) performed by a parent expression on a storage
+ * element access or property access node. Returns an array of op strings
+ * (typically one; two for compound assignments per D7).
+ */
+function classifyAccessOps(node) {
+  const parent = node.parent;
+  if (!parent) return ['read'];
+  // `delete storage['k']` or `delete storage.k` → remove
+  if (ts.isDeleteExpression(parent) && parent.expression === node) {
+    return ['remove'];
+  }
+  // `storage['k'] = v` or `storage['k'] += v`; same for dot access
+  if (ts.isBinaryExpression(parent) && parent.left === node) {
+    const kind = parent.operatorToken.kind;
+    if (kind === ts.SyntaxKind.EqualsToken) return ['write'];
+    if (COMPOUND_ASSIGNMENT_KINDS.has(kind)) return ['read', 'write'];
+  }
+  return ['read'];
 }
 
 /**
@@ -123,7 +171,24 @@ export function analyzeSource(code, filePath) {
   );
   const occurrences = [];
 
+  function record(node, storage, key, dynamic, expressionText, op, detectedVia) {
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+    const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
+    occurrences.push({
+      storage,
+      key,
+      dynamic,
+      expressionText,
+      op,
+      detectedVia,
+      line: line + 1,
+      column: character + 1,
+      snippet,
+    });
+  }
+
   function visit(node) {
+    // Pattern 1: method call — storage.setItem('k', v) / getItem / removeItem
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const propAccess = node.expression;
       const methodName = propAccess.name.text;
@@ -132,21 +197,47 @@ export function analyzeSource(code, filePath) {
         const storage = storageNameOf(propAccess.expression);
         if (storage) {
           const { key, dynamic, expressionText } = extractKey(node.arguments[0], sourceFile);
-          const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-          const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
-          occurrences.push({
-            storage,
-            key,
-            dynamic,
-            expressionText,
-            op,
-            line: line + 1,
-            column: character + 1,
-            snippet,
-          });
+          record(node, storage, key, dynamic, expressionText, op, 'method-call');
+          // Fall through and let the walker recurse. Pattern 3 will skip the
+          // method name (it's in STORAGE_API_MEMBERS), so there's no double
+          // counting, and argument-nested storage accesses are still visited.
         }
       }
     }
+
+    // Pattern 2: element access — storage['k'] (any op via parent classification)
+    if (ts.isElementAccessExpression(node)) {
+      const storage = storageNameOf(node.expression);
+      if (storage) {
+        const { key, dynamic, expressionText } = extractKey(node.argumentExpression, sourceFile);
+        const ops = classifyAccessOps(node);
+        for (const op of ops) {
+          record(node, storage, key, dynamic, expressionText, op, op === 'remove' ? 'delete' : 'indexed-access');
+        }
+      }
+    }
+
+    // Pattern 3: property (dot) access — storage.customKey
+    // Only when the name is NOT a Storage API member; otherwise it's a method
+    // reference or meta-property read, not a user-defined key. Also skip when
+    // this PropertyAccess is the callee of a CallExpression (already handled
+    // by pattern 1) or is itself referring to a storage global (e.g.
+    // `window.localStorage` — that's resolved by storageNameOf elsewhere).
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.name)) {
+      const keyName = node.name.text;
+      const parent = node.parent;
+      const isCalleeOfCall = parent && ts.isCallExpression(parent) && parent.expression === node;
+      if (!isCalleeOfCall && !STORAGE_API_MEMBERS.has(keyName)) {
+        const storage = storageNameOf(node.expression);
+        if (storage) {
+          const ops = classifyAccessOps(node);
+          for (const op of ops) {
+            record(node, storage, keyName, false, keyName, op, op === 'remove' ? 'delete' : 'property-access');
+          }
+        }
+      }
+    }
+
     ts.forEachChild(node, visit);
   }
   visit(sourceFile);
@@ -209,6 +300,7 @@ export function analyzeProjects(projectRoots) {
           line: occ.line,
           column: occ.column,
           op: occ.op,
+          detectedVia: occ.detectedVia,
           snippet: occ.snippet,
         });
       }
