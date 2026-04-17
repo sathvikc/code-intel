@@ -32,7 +32,7 @@ cd "$ROOT"
 
 # 1. Validate (dry-run: don't write package.json yet)
 if ! node -e "
-  import('./src/version-bump.js').then(({ determineBump }) => {
+  import('./scripts/version-bump.js').then(({ determineBump }) => {
     const r = determineBump(process.argv[1]);
     if (r.error) { console.error(r.error); process.exit(1); }
     console.error(\`bump: \${r.type} → \${r.bump}\`);
@@ -46,7 +46,7 @@ echo "Running tests..."
 npm test --silent
 
 # 3. Bump version (writes package.json)
-BUMP_INFO=$(node src/version-bump.js "$MSG")
+BUMP_INFO=$(node scripts/version-bump.js "$MSG")
 echo "Version: $BUMP_INFO"
 
 # 4. Stage package.json

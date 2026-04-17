@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { determineBump, applyBump, VALID_TYPES } from '../src/version-bump.js';
+import { determineBump, applyBump, VALID_TYPES } from './version-bump.js';
 
 test('feat → minor', () => {
   assert.deepEqual(determineBump('feat: add shared-state analyzer'), {
