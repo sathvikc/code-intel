@@ -10,6 +10,6 @@ dist/
 
 # AI / agent-local files — single-maintainer project, these stay out of git
 CLAUDE.md
-.claude/
+.claude
 .clauderc
 .ai-history/
