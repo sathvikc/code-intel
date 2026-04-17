@@ -2,15 +2,52 @@
 // code-intel CLI dispatcher.
 //
 // Usage:
-//   code-intel shared-state [paths...] [--pretty]
+//   code-intel shared-state  [paths...] [--pretty]   # localStorage / sessionStorage
+//   code-intel shared-events [paths...] [--pretty]   # window CustomEvent / listeners
 //
 // Emits JSON result to stdout, human summary to stderr. Multi-project is
 // first-class: pass N paths, each becomes a project in the result.
 
-import { analyzeProjects, summarize } from './shared-state-web-storage.js';
+import * as webStorage from './shared-state-web-storage.js';
+import * as events from './shared-state-events.js';
+
+const COMMANDS = {
+  'shared-state': {
+    analyzer: webStorage,
+    summarize: (s) => [
+      `code-intel / shared-state.web-storage`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  localStorage:  ${s.byStorage.localStorage ?? 0}`,
+      `  sessionStorage:${s.byStorage.sessionStorage ?? 0}`,
+      `cross-project:   ${s.crossProject}`,
+      `cross-file:      ${s.crossFile}`,
+      `dynamic keys:    ${s.dynamic}`,
+    ],
+  },
+  'shared-events': {
+    analyzer: events,
+    summarize: (s) => [
+      `code-intel / shared-state.events`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  dispatch:      ${s.byOp.dispatch ?? 0}`,
+      `  listen:        ${s.byOp.listen ?? 0}`,
+      `  unlisten:      ${s.byOp.unlisten ?? 0}`,
+      `cross-project:   ${s.crossProject}`,
+      `cross-file:      ${s.crossFile}`,
+      `dynamic channels:${s.dynamic}`,
+    ],
+  },
+};
 
 const USAGE = `Usage:
-  code-intel shared-state [paths...] [--pretty]
+  code-intel shared-state  [paths...] [--pretty]
+  code-intel shared-events [paths...] [--pretty]
+
+Subcommands:
+  shared-state   Detect localStorage / sessionStorage key coupling.
+  shared-events  Detect window / globalThis CustomEvent coupling.
 
 Args:
   paths          One or more project roots. Defaults to "." if omitted.
@@ -34,27 +71,14 @@ function parseArgs(argv) {
   return args;
 }
 
-function printSummary(summary) {
-  const lines = [
-    `code-intel / shared-state.web-storage`,
-    `projects:       ${summary.projectCount}`,
-    `findings:       ${summary.findingCount}`,
-    `  localStorage: ${summary.byStorage.localStorage ?? 0}`,
-    `  sessionStorage: ${summary.byStorage.sessionStorage ?? 0}`,
-    `cross-project:  ${summary.crossProject}`,
-    `cross-file:     ${summary.crossFile}`,
-    `dynamic keys:   ${summary.dynamic}`,
-  ];
-  process.stderr.write(lines.join('\n') + '\n');
-}
-
 async function main(argv) {
   const [sub, ...rest] = argv;
   if (!sub || sub === '-h' || sub === '--help') {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (sub !== 'shared-state') {
+  const cmd = COMMANDS[sub];
+  if (!cmd) {
     process.stderr.write(`Unknown command: ${sub}\n\n${USAGE}`);
     return 2;
   }
@@ -69,10 +93,11 @@ async function main(argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = analyzeProjects(args.paths);
+  const result = cmd.analyzer.analyzeProjects(args.paths);
   const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
   process.stdout.write(json + '\n');
-  printSummary(summarize(result));
+  const summary = cmd.analyzer.summarize(result);
+  process.stderr.write(cmd.summarize(summary).join('\n') + '\n');
   return 0;
 }
 
