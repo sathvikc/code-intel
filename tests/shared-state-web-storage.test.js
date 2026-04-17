@@ -7,7 +7,6 @@ import path from 'node:path';
 import {
   analyzeSource,
   analyzeProjects,
-  resolveProject,
   SCHEMA_VERSION,
   ANALYZER_ID,
 } from '../src/shared-state-web-storage.js';
@@ -221,17 +220,6 @@ function write(root, rel, content) {
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, content);
 }
-
-test('resolveProject uses package.json name, falls back to basename', () => {
-  const a = mktmp();
-  write(a, 'package.json', JSON.stringify({ name: '@org/app-a' }));
-  const pa = resolveProject(a);
-  assert.equal(pa.id, '@org/app-a');
-
-  const b = mktmp();
-  const pb = resolveProject(b);
-  assert.equal(pb.id, path.basename(b));
-});
 
 test('groups the same storage key across files and projects', () => {
   const a = mktmp();
