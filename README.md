@@ -84,9 +84,11 @@ Four more detectors are already sketched in `PATTERNS.md`, with backlog entries 
 | `duplicate-static-svg-id` | P6 | Hardcoded IDs inside inline SVG `<defs>` in components that render many times — gradient/filter/mask corruption from DOM-global ID resolution. |
 | `module-scope-handler` | P7 | Module-scope function references passed by name to `addEventListener` — the shape that production-only instrumentation wrappers can cache and silently stop firing. |
 | `proxied-platform-global` | P8 | Wholesale replacement of a built-in browser global (`window.history = new Proxy(...)`, `window.fetch = new Proxy(...)`) — a code smell because third-party writes can vanish through the proxy. |
-| Shape-drift on shared storage keys | completes P4 | Same storage key written from multiple places with structurally different right-hand sides — the SSR/CSR shape-mismatch case. |
+| `shape-drift` | P9 | Write-shape vs read-shape across any shared channel (storage / cookies / events / URL) — the "writer stored `{name}`, refactored to `{firstName, lastName}`, readers got `undefined`" class. Completes P4 on the storage case. |
 
-The catalogue grows whenever a new production bug is dumped into `PATTERNS.md`. It's built to grow; that's the point.
+Infrastructure and orchestration items tracked in `BACKLOG.md` include: MCP server, configuration file, inline suppression syntax, change-coupling from git history, Nx-affected overlay, content-hash cache for sub-second warm scans, risk score per finding, and shell-outs to Knip / Biome / dependency-cruiser. See that file for the full list and priorities.
+
+The catalogue grows whenever a new production bug is shared. It's built to grow; that's the point.
 
 ## Output
 
