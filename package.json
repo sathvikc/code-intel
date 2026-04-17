@@ -1,15 +1,21 @@
 {
   "name": "code-intel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Static analyzer that finds the coupling your import graph can't see.",
   "type": "module",
   "private": true,
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "code-intel": "src/cli.js"
+  },
   "scripts": {
-    "test": "node --test scripts/*.test.js",
+    "test": "node --test tests/*.test.js",
     "commit": "./scripts/commit.sh",
     "postinstall": "git config core.hooksPath .githooks || true"
+  },
+  "dependencies": {
+    "typescript": "^5.6.0"
   }
 }
