@@ -13,16 +13,45 @@ Out of scope for this file: repo layout, commit conventions, test runner
 choice, internal refactors, CI plumbing. Those live in the repo itself or in
 agent-local notes.
 
+## These entries evolve
+
+A decision logged here is a snapshot of reasoning at the time it was made.
+It is not a permanent commitment. New information, new use cases, or a
+better approach can and should change it. What stays permanent is the
+*record* — the trajectory of how the thinking moved, so future readers
+(human or AI) understand *why* the tool behaves the way it does today.
+
+Rules for evolving a decision:
+
+1. **Append-only.** Never rewrite the body of an existing entry to reflect
+   a new decision. The old reasoning stays visible; that's how the
+   trajectory remains legible.
+2. **Supersession.** When a decision changes substantively, add a new
+   `D<M>` entry with a `Supersedes: D<N>` line that explains *what
+   changed* and *why*. Then flip the old entry's `Status` from `active`
+   to `superseded-by: D<M>`. Status is the one permitted in-place edit;
+   never alter the reasoning.
+3. **Cross-references.** An entry may carry a `Related:` line listing
+   other `D<N>` / `Q<N>` numbers it depends on or affects. Before
+   changing a decision, grep for back-references — a new choice should
+   not silently invalidate a prior one.
+4. **Clarifications vs. changes.** Fix typos, rewording, or formatting
+   freely. Anything that alters what the tool does → new entry.
+5. **Timeline via git.** `git log -- DESIGN_DECISIONS.md` is the
+   authoritative chronology. Dates are not duplicated into entries.
+
 ## Format
 
-Each entry is numbered (`D<N>`), append-only. Numbers are never reused, even
-if an entry is superseded. When a decision from `OPEN_QUESTIONS.md` is
-resolved it moves here with a new `D<N>` number.
+Each entry is numbered (`D<N>`), append-only. Numbers are never reused,
+even when an entry is superseded. When a question from `OPEN_QUESTIONS.md`
+is resolved, it moves here with a new `D<N>` number.
 
 ```
 ## D<N> — <Title>
 
-**Status:** active | superseded-by-D<M>
+**Status:** active | superseded-by: D<M>
+**Supersedes:** D<K>                    (optional; only when this entry replaces a prior one)
+**Related:** D<A>, D<B>, Q<C>           (optional)
 **Decision:** <one sentence>
 **Context:** <why the question came up>
 **Alternatives considered:** <what else we looked at>
@@ -59,6 +88,7 @@ be a breaking schema change. Build it in from day 1, keep it light.
 ## D2 — Recall over precision
 
 **Status:** active
+**Related:** D4, Q3, Q5
 **Decision:** When in doubt between reporting a finding and suppressing it,
 report. The analyzer's job is to surface signal. The reviewer (AI agent or
 human) decides what's noise.
@@ -108,6 +138,7 @@ still ship additive fields). An explicit schema version separates
 ## D4 — `detectedVia` structured metadata on every occurrence
 
 **Status:** active
+**Related:** D2, Q5, Q9, Q10
 **Decision:** Every occurrence in a finding carries a `detectedVia` string
 indicating *how* the coupling was detected (`"method-call"`,
 `"indexed-access"`, `"property-access"`, `"delete"`, …). Enables
@@ -131,6 +162,7 @@ that we'd later regret. `confidence` is deferred as open.
 ## D5 — Syntactic parsing only (no type checker)
 
 **Status:** active
+**Related:** Q1, Q2, Q8
 **Decision:** Analyzers use `ts.createSourceFile` to get an AST and do not
 create a full TypeScript program or invoke the type checker. Detection is
 syntactic and pattern-based.
@@ -155,6 +187,7 @@ revisited, not the other way around.
 ## D6 — Dot-access detection with method-name whitelist
 
 **Status:** active
+**Related:** D2
 **Decision:** `localStorage.foo` (dot property access) IS detected as a
 storage access. A whitelist of known Storage API method/property names
 (`setItem`, `getItem`, `removeItem`, `clear`, `key`, `length`) prevents
