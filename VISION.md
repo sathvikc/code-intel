@@ -1,7 +1,8 @@
 # code-intel — Project Vision
 
-> **The static analyzer that finds the coupling your import graph can't see —
-> and hands it to an AI agent in a form it can reason about.**
+> **The static analyzer that finds the JS/TS production bugs your linter,
+> your type checker, and your import graph don't see — packaged for an AI
+> agent to reason about.**
 
 This document is the north star. When a feature, PR, or roadmap item is proposed,
 the question is always: *does this move us toward the vision, or away from it?*
