@@ -67,6 +67,7 @@ import * as events from './shared-state-events.js';
 import * as globals from './shared-state-globals.js';
 import * as staleCapture from './stale-module-capture.js';
 import * as pairedKeys from './paired-keys.js';
+import * as shapeDrift from './shape-drift.js';
 import * as importGraph from './import-graph.js';
 import { resolveProject } from './project.js';
 
@@ -92,6 +93,15 @@ function severityFor(kind, detail) {
       // once another writer touches one of the paired keys without the
       // others, which we don't correlate in v1.
       return 'warning';
+    case 'shape-drift': {
+      // Reader accessing a field no writer writes is the canonical crash
+      // shape (undefined property access); readOnlyKeys > 0 is a strong
+      // signal. Cross-project always escalates to critical.
+      const projects = new Set(detail.occurrences.map((o) => o.project));
+      if (projects.size > 1) return 'critical';
+      if ((detail.readOnlyKeys?.length ?? 0) > 0) return 'critical';
+      return 'warning';
+    }
     default:
       return 'info';
   }
@@ -132,6 +142,8 @@ function confidenceFor(kind, detail) {
       return confidenceStaleCapture(detail);
     case 'paired-keys':
       return confidencePairedKeys(detail);
+    case 'shape-drift':
+      return confidenceShapeDrift(detail);
     default:
       return { confidence: 'medium', reason: 'No specific confidence rule for this finding kind.' };
   }
@@ -284,6 +296,51 @@ function confidencePairedKeys(detail) {
   };
 }
 
+function confidenceShapeDrift(detail) {
+  // shape-drift only emits when BOTH sides have at least one literal
+  // shape observation AND the aggregated shapes disagree — so the
+  // factual claim "these keys don't match" is always true for emitted
+  // findings. Confidence modulates on which *kind* of drift it is:
+  //
+  //   - readOnlyKeys > 0  → reader accesses a field no writer writes.
+  //     This is the undefined-property-access crash shape. High.
+  //   - writeOnlyKeys only → writer writes a field no reader reads.
+  //     Could be dead data, could be a missing reader elsewhere we
+  //     didn't scan (wrapper module, worker, different project). Medium.
+  //
+  // Opaque counts appear in the reason so the reviewer knows there are
+  // sites we couldn't see through.
+  const readOnly = detail.readOnlyKeys ?? [];
+  const writeOnly = detail.writeOnlyKeys ?? [];
+  const opaqueNote = (detail.opaqueWrites || detail.opaqueReads)
+    ? ` Note: ${detail.opaqueWrites} writer site(s) and ${detail.opaqueReads} reader site(s) are opaque `
+      + '(the analyzer couldn\'t resolve their shape — e.g. a stringify of a variable, a returned-only '
+      + 'parse result); they are listed in occurrences but did not contribute to the shape union.'
+    : '';
+  if (readOnly.length > 0) {
+    return {
+      confidence: 'high',
+      reason:
+        `Reader accesses [${readOnly.map((k) => `'${k}'`).join(', ')}] on ${detail.storage}['${detail.key}'], `
+        + 'but no writer sets these keys. At runtime the reader will see `undefined` for these fields and '
+        + 'either crash on a property access or silently fall through. This is the canonical shape-drift '
+        + 'bug shape (writer refactored, reader not updated, or vice versa) — the storage boundary hides '
+        + 'the mismatch from TypeScript and linters.'
+        + opaqueNote,
+    };
+  }
+  return {
+    confidence: 'medium',
+    reason:
+      `Writer stores [${writeOnly.map((k) => `'${k}'`).join(', ')}] on ${detail.storage}['${detail.key}'] `
+      + 'that no visible reader accesses. This is weaker than the "reader sees undefined" case — the fields '
+      + 'may simply be dead data, or a reader the analyzer did not scan (a worker, a wrapper module, a '
+      + 'different repo) may still rely on them. Verify none of those consumers exist before concluding '
+      + 'it is safe to drop the write.'
+      + opaqueNote,
+  };
+}
+
 // ---------- per-kind message + relatedFiles shaping ----------
 
 function messageFor(kind, detail) {
@@ -306,6 +363,18 @@ function messageFor(kind, detail) {
     case 'paired-keys':
       return `${detail.storage} paired-write cluster: [${detail.keys.map((k) => `'${k}'`).join(', ')}]`
         + ` — all callers should update together`;
+    case 'shape-drift': {
+      const wo = detail.writeOnlyKeys ?? [];
+      const ro = detail.readOnlyKeys ?? [];
+      const fmt = (arr) => arr.map((k) => `'${k}'`).join(', ');
+      if (ro.length > 0 && wo.length > 0) {
+        return `${detail.storage}['${detail.key}']: writer stores [${fmt(wo)}] but reader accesses [${fmt(ro)}] — shape drift`;
+      }
+      if (ro.length > 0) {
+        return `${detail.storage}['${detail.key}']: reader accesses [${fmt(ro)}] that no writer sets`;
+      }
+      return `${detail.storage}['${detail.key}']: writer stores [${fmt(wo)}] that no reader accesses`;
+    }
     default:
       return 'finding';
   }
@@ -428,6 +497,12 @@ function fingerprintFor(kind, detail) {
       );
       break;
     }
+    case 'shape-drift':
+      // Per-channel identity: the finding is "the shape contract on
+      // (storage, key) is broken." Adding more writers or readers that
+      // keep disagreeing does not change which channel the drift is on.
+      parts.push(detail.storage ?? '?', detail.key ?? '');
+      break;
     default:
       // Unknown kind: hash whatever identity the detail carries, so at
       // least the fingerprint is deterministic per-run.
@@ -497,6 +572,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const glbResult = globals.analyzeProjects(projectRoots);
   const stlResult = staleCapture.analyzeProjects(projectRoots);
   const prsResult = pairedKeys.analyzeProjects(projectRoots);
+  const sdrResult = shapeDrift.analyzeProjects(projectRoots);
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
   const projects = projectRoots.map(resolveProject);
@@ -509,6 +585,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   for (const f of glbResult.findings) wrapped.push(wrap('shared-global-binding', f, rootById, changedFilesAbs));
   for (const f of stlResult.findings) wrapped.push(wrap('stale-module-capture', f, rootById, changedFilesAbs));
   for (const f of prsResult.findings) wrapped.push(wrap('paired-keys', f, rootById, changedFilesAbs));
+  for (const f of sdrResult.findings) wrapped.push(wrap('shape-drift', f, rootById, changedFilesAbs));
 
   // 4. Sort: change-touching first, then severity, then stable by id.
   const SEV_ORDER = { critical: 0, warning: 1, info: 2 };

@@ -20,6 +20,7 @@ import * as events from './shared-state-events.js';
 import * as globals from './shared-state-globals.js';
 import * as staleCapture from './stale-module-capture.js';
 import * as pairedKeys from './paired-keys.js';
+import * as shapeDrift from './shape-drift.js';
 import * as impact from './impact.js';
 import { renderMarkdown } from './report-markdown.js';
 
@@ -87,6 +88,19 @@ const ANALYZER_COMMANDS = {
       `keys (max/cluster): ${s.maxKeys}`,
     ],
   },
+  'shape-drift': {
+    analyzer: shapeDrift,
+    summarize: (s) => [
+      `code-intel / shape-drift`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  localStorage:  ${s.byStorage.localStorage ?? 0}`,
+      `  sessionStorage:${s.byStorage.sessionStorage ?? 0}`,
+      `  read-only drift:  ${s.withReadOnlyDrift}`,
+      `  write-only drift: ${s.withWriteOnlyDrift}`,
+      `  both sides drift: ${s.withBothDrift}`,
+    ],
+  },
 };
 
 const USAGE = `Usage:
@@ -96,6 +110,7 @@ const USAGE = `Usage:
   code-intel shared-globals  [paths...] [--pretty]
   code-intel stale-captures  [paths...] [--pretty]
   code-intel paired-keys     [paths...] [--pretty]
+  code-intel shape-drift     [paths...] [--pretty]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -110,6 +125,12 @@ Subcommands:
   paired-keys     Detect intra-function setItem clusters — storage keys designed to
                   be written together (e.g. value + timestamp). Any writer who touches
                   only one of the pair breaks the cache-freshness invariant.
+  shape-drift     Detect write-shape vs read-shape mismatches across a storage
+                  channel. Writer stores {name}; reader accesses .firstName; the
+                  refactor type-checked fine because TypeScript does not see across
+                  the JSON.stringify / JSON.parse boundary. v1 is storage-only and
+                  catches literal object-literal writes against literal property
+                  accesses; wider channels and wrapper modules come later.
 
 Args:
   paths           One or more project roots. Defaults to "." if omitted.

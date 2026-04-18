@@ -39,6 +39,7 @@ const KIND_LABELS = {
   'shared-global-binding': 'Shared global binding',
   'stale-module-capture': 'Stale module-scope capture',
   'paired-keys': 'Paired storage keys',
+  'shape-drift': 'Shape drift across storage channel',
 };
 
 export function renderMarkdown(result) {
