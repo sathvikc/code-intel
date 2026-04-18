@@ -17,6 +17,7 @@ Shipped (also listed for cross-reference with `PATTERNS.md`):
 - [x] `shared-globals` — classic-script / `window.*` collisions (P3)
 - [x] `stale-captures` — stale module-scope capture of dynamic sources (P5)
 - [x] `paired-keys` — co-located `setItem` cluster in one function body (P10)
+- [x] `shape-drift` v1 — storage channel; literal-literal write/read shape disagreement on a shared key (addresses P9 for the storage case; catches the literal side of P4)
 - [x] `impact` — unified orchestrator: runs all detectors, adds `--since <ref>` diff-awareness, blast-radius via import graph, markdown + JSON reporters
 - [x] import-graph — AST-based reverse import graph + BFS blast-radius traversal
 
@@ -26,7 +27,7 @@ Planned:
 - [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
-- [ ] `shape-drift` — compare write-shape vs read-shape across any shared channel (storage / cookies / events / URL); completes P4 (storage case) and addresses P9 broadly
+- [ ] `shape-drift` v2 — broaden channels (cookies, CustomEvent detail, URL params) and resolve cross-function / wrapper-module / constant-folded shapes so the SSR-inline-script opaque-writer case (P4) lights up
 - [ ] `paired-keys` v2 — cross-cluster correlation: flag other writers that touch only one key of a known pair elsewhere in the codebase (v1 emits the intra-cluster finding only; see P10)
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 

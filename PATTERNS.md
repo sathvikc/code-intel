@@ -53,7 +53,7 @@ recall anchor when revisiting months later.
 - **Symptoms:** feature flags appear stale or wrong-shaped after a deploy; CSR code path reads yesterday's serialized structure; SSR and CSR give different answers for the same key.
 - **Root cause:** the SSR inline script writes storage key `K` with shape `S1`; the CSR loader caches key `K` with shape `S2` and a TTL. Same key, two writers, two shapes. When the CSR cache is fresh it serves the stale shape.
 - **Static signal:** same storage key written by ≥2 sources with structurally different right-hand-side expressions. Bonus: at least one of those writers is an SSR/inline context (server-rendered inline `<script>` blocks, `__NEXT_DATA__`-style hydration payloads, framework-specific inline script directives).
-- **Detector:** partial — `shared-state` surfaces the coupling. Shape-drift detection not yet built (see BACKLOG → wrapper / shape inference).
+- **Detector:** partial — `shared-state` surfaces the coupling; `shape-drift` (v1, storage channel) now catches the literal-shape vs literal-shape mismatch case. The SSR-inline-script opaque-writer case is still a v2 problem (writer's RHS is an identifier, not an object literal, so v1 can't see its shape).
 - **Source:** real incident — an SSR-framework inline script and a CSR hydration path both wrote the same `sessionStorage` key in incompatible shapes.
 
 ## P5 — Stale module-scope capture of a dynamic source
@@ -112,7 +112,7 @@ recall anchor when revisiting months later.
   - Nested-field changes — v1 is top-level keys only. `user.address.street` → `user.addressLine1` is a v2 problem.
   - Writes whose RHS is an opaque variable sourced from an API response the analyzer can't see.
   - Wrapper modules: `storage.set('user', data)` where the literal shape was lost in a helper (see Q2).
-- **Detector:** not-yet-built. Candidate name: `shape-drift`. Builds on `shared-state` and `shared-events` — reuses their channel detection, adds a shape extractor on both sides and a comparator.
+- **Detector:** built (v1, storage channel) — `shape-drift` (`src/shape-drift.js`). v1 definition: emit a `shape-drift` finding per `(storage, key)` channel where BOTH sides have at least one literal shape observation AND the aggregated write-shape disagrees with the read-shape. Write side is `setItem(literalKey, JSON.stringify(<objectLiteral>))`; read side is `JSON.parse(storage.getItem(literalKey))` consumed via direct property access, destructuring, or a variable binding that is later property-accessed in the same scope. Tolerant of `… || '{}'` / `… ?? '{}'` / `…!` / parens. Additive to `shared-state` — the coupling finding remains; the shape-drift finding is layered on top to make the broken *contract* (not just the coupling) visible.
 - **Source:** generalised by the product owner from the specific case "writer stored `{ name }`, refactored to `{ firstName, lastName }`, readers across the codebase broke silently." Applies to any cross-file channel, not just storage.
 - **Note:** deliberately syntactic (D5). The TypeScript type system does not see across `JSON.parse` / storage / cookie / event boundaries, even in fully-typed codebases. A realistic shape-drift detector must derive shape summaries from the source code itself, not from types. This is also why no existing tool catches this — they either stop at the type layer, or they don't look at shapes at all.
 
