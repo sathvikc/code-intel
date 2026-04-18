@@ -21,9 +21,11 @@
 // but it's the best we can do purely from file contents. Per D2 we prefer
 // recall: flag broadly, let the reviewer dismiss obvious false positives.
 //
-// Grouping: by binding name. A finding is emitted when ≥2 occurrences
-// share a name (that's the collision). Single-file self-declarations do
-// not emit findings — they're not coupling until someone else joins.
+// Grouping: by binding name. A finding is emitted when ≥2 DISTINCT files
+// share a name (that's the collision). Multiple occurrences in a single
+// file — re-assignments, redeclarations, self-shadowing — are not a
+// cross-bundle collision; they're just intra-file code. A name is only
+// coupling once another file also touches it.
 //
 // Reads are not detected in v1. Telling "bare identifier read of a global"
 // from "read of a local" requires scope analysis we don't do. Writes
@@ -278,9 +280,14 @@ export function analyzeProjects(projectRoots) {
     }
   }
 
-  // Only emit findings for names with ≥2 occurrences — the collision.
+  // Only emit findings for names that cross ≥2 DISTINCT files — the
+  // cross-bundle collision case. Multiple writes/declarations inside one
+  // file are intra-file code, not coupling.
   const findings = [...groups.values()]
-    .filter(f => f.occurrences.length >= 2)
+    .filter(f => {
+      const files = new Set(f.occurrences.map(o => `${o.project}::${o.file}`));
+      return files.size >= 2;
+    })
     .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
   return {

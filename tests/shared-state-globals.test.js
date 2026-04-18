@@ -199,6 +199,41 @@ test('integration: single-file self-declaration emits NO finding', () => {
   assert.equal(result.findings.length, 0);
 });
 
+test('integration: multiple writes to same global in ONE file emit NO finding (regression: meganav §2.6)', () => {
+  // Three explicit window.X writes inside one file is intra-file code
+  // (reassignment / reset), not a cross-bundle collision. Before the fix,
+  // the detector counted occurrences >= 2 and emitted a finding even when
+  // all occurrences came from the same file — the meganav dogfood flagged
+  // this as a false positive on __meganavScrollLockOverlays.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'solo' }));
+  write(
+    a,
+    'src/blurBgUtils.js',
+    `window.__scrollLockOverlays = new Set();
+     function add(id) { window.__scrollLockOverlays.add(id); }
+     window.__scrollLockOverlays = null;`,
+  );
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 0);
+});
+
+test('integration: classic-script redeclaration inside one file emits NO finding', () => {
+  // Two top-level `function X()` in the SAME classic-script file.
+  // Technically the second shadows the first, but that's a runtime
+  // concern in one file — not coupling to another file. No finding.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'solo' }));
+  write(
+    a,
+    'src/legacy.js',
+    `function dupe() { return 1; }
+     function dupe() { return 2; }`,
+  );
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 0);
+});
+
 test('integration: same name declared in two files -> one finding with 2 occurrences', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
