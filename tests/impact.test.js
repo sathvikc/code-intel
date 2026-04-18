@@ -252,6 +252,113 @@ test('message: dynamic with no key and no expression still renders (dynamic)', (
   assert.ok(f.message.includes('(dynamic'), `message was: ${f.message}`);
 });
 
+// ---------- confidence ----------
+
+test('confidence: every finding carries high | medium | low + a reason', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+  write(a, 'src/stale.ts', `const x = document.cookie;`);
+  const r = analyzeProjects([a]);
+  assert.ok(r.findings.length >= 2);
+  for (const f of r.findings) {
+    assert.match(f.confidence, /^(high|medium|low)$/);
+    assert.equal(typeof f.confidenceReason, 'string');
+    assert.ok(f.confidenceReason.length > 20, `reason too short for ${f.id}`);
+  }
+});
+
+test('confidence: summary.byConfidence aggregates counts', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+  const r = analyzeProjects([a]);
+  assert.ok(r.summary.byConfidence);
+  const total = (r.summary.byConfidence.high ?? 0)
+    + (r.summary.byConfidence.medium ?? 0)
+    + (r.summary.byConfidence.low ?? 0);
+  assert.equal(total, r.findings.length);
+});
+
+test('confidence: cross-file write+read literal storage key is high', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('app.session', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('app.session');`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.id === 'shared-storage-key:app.session');
+  assert.ok(f);
+  assert.equal(f.confidence, 'high');
+  assert.match(f.confidenceReason, /canonical shared-state shape|cross-project/i);
+});
+
+test('confidence: cross-project literal storage key is high and reason mentions projects', () => {
+  const a = mktmp();
+  const b = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
+  write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
+  write(a, 'src/w.ts', `localStorage.setItem('shared.k', 1);`);
+  write(b, 'src/r.ts', `localStorage.getItem('shared.k');`);
+  const r = analyzeProjects([a, b]);
+  const f = r.findings.find((x) => x.id === 'shared-storage-key:shared.k');
+  assert.ok(f);
+  assert.equal(f.confidence, 'high');
+  assert.match(f.confidenceReason, /2 projects|cross-project/i);
+});
+
+test('confidence: dynamic storage key is low', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/x.ts', `const k = 'foo'; localStorage.setItem(k, 1);`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'shared-storage-key' && x.detail.dynamic);
+  assert.ok(f);
+  assert.equal(f.confidence, 'low');
+  assert.match(f.confidenceReason, /computed at runtime|heuristic/i);
+});
+
+test('confidence: shared-global-binding is high with "whichever loads last wins" framing', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  // Classic script (no import/export) with a top-level function declaration.
+  write(a, 'src/one.js', `function parseCookie() { return 1; }`);
+  write(a, 'src/two.js', `function parseCookie() { return 2; }`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'shared-global-binding');
+  assert.ok(f);
+  assert.equal(f.confidence, 'high');
+  assert.match(f.confidenceReason, /loads last|silently overwrites/i);
+});
+
+test('confidence: stale-module-capture is medium and reason names SPA/MPA context', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/x.ts', `const tier = document.cookie;`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'stale-module-capture');
+  assert.ok(f);
+  assert.equal(f.confidence, 'medium');
+  assert.match(f.confidenceReason, /single-page|SPA|multi-page|MPA|worker/i);
+});
+
+test('confidence: paired-keys is medium and reason calls out v2 cross-file correlation', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/x.ts', `
+    export function cache(v) {
+      sessionStorage.setItem('k1', v);
+      sessionStorage.setItem('k2', v);
+    }
+  `);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'paired-keys');
+  assert.ok(f);
+  assert.equal(f.confidence, 'medium');
+  assert.match(f.confidenceReason, /cluster|v2|correlate|travel together/i);
+});
+
 // ---------- fingerprint ----------
 
 test('fingerprint: present on every finding, 16 hex chars', () => {

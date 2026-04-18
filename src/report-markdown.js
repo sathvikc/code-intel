@@ -27,6 +27,12 @@ const SEV_SYMBOLS = {
   info: '🔵',
 };
 
+const CONFIDENCE_TAGS = {
+  high: '`high confidence`',
+  medium: '`medium confidence`',
+  low: '`low confidence`',
+};
+
 const KIND_LABELS = {
   'shared-storage-key': 'Shared storage key',
   'shared-event-channel': 'Shared event channel',
@@ -57,6 +63,13 @@ export function renderMarkdown(result) {
       + `${SEV_SYMBOLS.warning} ${summary.bySeverity.warning ?? 0} warning · `
       + `${SEV_SYMBOLS.info} ${summary.bySeverity.info ?? 0} info`,
   );
+  if (summary.byConfidence) {
+    out.push(
+      `- **By confidence:** ${summary.byConfidence.high ?? 0} high · `
+        + `${summary.byConfidence.medium ?? 0} medium · `
+        + `${summary.byConfidence.low ?? 0} low`,
+    );
+  }
   const kindLine = Object.entries(summary.byKind)
     .map(([k, n]) => `${KIND_LABELS[k] ?? k}: ${n}`)
     .join(' · ');
@@ -123,7 +136,11 @@ export function renderMarkdown(result) {
       out.push('');
       for (const f of byKind.get(kind)) {
         const changedMark = f.touchesChange ? ' ⬅ **touches change**' : '';
-        out.push(`- **\`${f.id}\`**${changedMark} — ${f.message}`);
+        const confTag = f.confidence ? ` ${CONFIDENCE_TAGS[f.confidence] ?? ''}` : '';
+        out.push(`- **\`${f.id}\`**${confTag}${changedMark} — ${f.message}`);
+        if (f.confidenceReason) {
+          out.push(`  > ${f.confidenceReason}`);
+        }
         if (f.relatedFiles?.length) {
           out.push('  | Project | File | Line | Op |');
           out.push('  | :--- | :--- | ---: | :--- |');

@@ -21,7 +21,7 @@
 //     meta:    { timestamp, base, projectCount, changedFileCount, ... },
 //     summary: {
 //       totalFindings, findingsTouchingChange,
-//       byKind, bySeverity,
+//       byKind, bySeverity, byConfidence,
 //       blastRadius: { total, byDepth, maxDepth } | null
 //     },
 //     projects: [{ id, root }],
@@ -33,7 +33,13 @@
 //                               //   Use this to tag a finding persistently
 //                               //   across re-runs.
 //         kind,                 // finding kind (from analyzer)
-//         severity,             // "critical" | "warning" | "info"
+//         severity,             // "critical" | "warning" | "info" (blast-radius
+//                               //   heuristic — how bad is this IF it's a bug).
+//         confidence,           // "high" | "medium" | "low" (signal quality —
+//                               //   how sure are we that it IS a bug).
+//         confidenceReason,     // one-paragraph explanation of why this
+//                               //   finding earns that confidence. Tells the
+//                               //   reviewer whether to act or dig deeper.
 //         message,              // human-readable summary
 //         detail,               // analyzer-specific payload (full analyzer finding)
 //         relatedFiles: [{ project, file, line, role }],
@@ -89,6 +95,193 @@ function severityFor(kind, detail) {
     default:
       return 'info';
   }
+}
+
+// ---------- confidence: "is this actually a bug, or noise?" ----------
+//
+// Every finding carries:
+//   - confidence: 'high' | 'medium' | 'low'
+//   - confidenceReason: one-paragraph justification
+//
+// confidence is about *signal quality* — how sure are we this is a real
+// issue a human should look at. It is distinct from severity, which is
+// about *blast radius* — how bad it would be IF it's a bug.
+//
+// The split matters because static analysis ships with false positives by
+// nature, and a tool that dumps 200 findings without saying which ones it
+// stands behind is indistinguishable from noise. For each pattern we ask:
+//
+//   - What shape of the finding is undeniably a bug?     → high
+//   - What shape is real coupling but context-dependent? → medium
+//   - What shape needs human eyes to even know what it   → low
+//     refers to (e.g. dynamic keys the analyzer can't
+//     resolve)?
+//
+// Reasons are written as one paragraph a reviewer can read in 5 seconds
+// and decide whether to act. They intentionally name the context (SPA vs
+// MPA, same-file vs cross-project, etc.) that governs the classification.
+function confidenceFor(kind, detail) {
+  switch (kind) {
+    case 'shared-storage-key':
+      return confidenceStorageKey(detail);
+    case 'shared-event-channel':
+      return confidenceEventChannel(detail);
+    case 'shared-global-binding':
+      return confidenceGlobalBinding(detail);
+    case 'stale-module-capture':
+      return confidenceStaleCapture(detail);
+    case 'paired-keys':
+      return confidencePairedKeys(detail);
+    default:
+      return { confidence: 'medium', reason: 'No specific confidence rule for this finding kind.' };
+  }
+}
+
+function confidenceStorageKey(detail) {
+  if (detail.dynamic) {
+    return {
+      confidence: 'low',
+      reason:
+        'The storage key is computed at runtime, so occurrence grouping is heuristic — '
+        + 'two dynamic sites that happen to share the same dynamic-site fingerprint may or '
+        + 'may not reference the same logical key. Treat this finding as "a dynamic storage '
+        + 'site worth auditing" rather than a concrete coupling claim.',
+    };
+  }
+  const projects = new Set(detail.occurrences.map((o) => o.project));
+  const files = new Set(detail.occurrences.map((o) => `${o.project}:${o.file}`));
+  const ops = new Set(detail.occurrences.map((o) => o.op));
+  const hasWrite = ops.has('write');
+  const hasRead = ops.has('read') || ops.has('remove');
+  if (projects.size >= 2) {
+    return {
+      confidence: 'high',
+      reason:
+        `Literal key '${detail.key}' is touched by ${files.size} files across ${projects.size} projects. `
+        + 'Cross-project storage coupling is direct and almost always intentional — if one project changes '
+        + "the shape or timing of writes, readers in another project silently break. There is no type-level "
+        + 'contract across a storage boundary, so the analyzer is reporting a real coupling, not a guess.',
+    };
+  }
+  if (files.size >= 2 && hasWrite && hasRead) {
+    return {
+      confidence: 'high',
+      reason:
+        `Literal key '${detail.key}' is written in one file and read in another within the same project. `
+        + 'This is the canonical shared-state shape: the writer\'s data contract is implicitly consumed '
+        + "by the reader with no compiler enforcement. Refactors on either side break the other silently.",
+    };
+  }
+  if (files.size >= 2) {
+    return {
+      confidence: 'medium',
+      reason:
+        `Literal key '${detail.key}' is touched by ${files.size} files but all occurrences are the same `
+        + `operation type (${[...ops].join(', ')}). The coupling is real but weaker — e.g. several readers `
+        + 'with no visible writer may mean the writer is in a module the analyzer did not scan (a wrapper '
+        + 'or a worker file), or the write happens on a different branch that was pruned.',
+    };
+  }
+  return {
+    confidence: 'medium',
+    reason:
+      `Literal key '${detail.key}' is used within a single file. The in-file coupling is real (if one `
+      + 'function writes and another reads, shape drift across a refactor still bites), but the blast '
+      + 'radius is local. Verify the key is not read or written elsewhere via a wrapper module this '
+      + "analyzer can't see.",
+  };
+}
+
+function confidenceEventChannel(detail) {
+  if (detail.dynamic) {
+    return {
+      confidence: 'low',
+      reason:
+        'The event channel name is computed at runtime. The analyzer has recorded a dynamic dispatch '
+        + 'or listener site; whether this channel actually collides with another site depends on '
+        + 'what the expression evaluates to. Audit the site and decide if it needs a stable channel name.',
+    };
+  }
+  const projects = new Set(detail.occurrences.map((o) => o.project));
+  const files = new Set(detail.occurrences.map((o) => `${o.project}:${o.file}`));
+  const ops = new Set(detail.occurrences.map((o) => o.op));
+  if (projects.size >= 2) {
+    return {
+      confidence: 'high',
+      reason:
+        `CustomEvent channel '${detail.channel}' is used across ${projects.size} projects. `
+        + "The dispatcher and listener have an implicit contract on the event's `detail` payload — "
+        + 'shape drift on one side breaks the other silently, and the event bus has no type system '
+        + 'to catch it.',
+    };
+  }
+  if (files.size >= 2 && ops.has('dispatch') && ops.has('listen')) {
+    return {
+      confidence: 'high',
+      reason:
+        `CustomEvent channel '${detail.channel}' is dispatched by one file and listened to by another. `
+        + "Any change to the event's detail shape requires coordinated edits to both sides; the coupling "
+        + 'is real and unchecked by the compiler.',
+    };
+  }
+  return {
+    confidence: 'medium',
+    reason:
+      `CustomEvent channel '${detail.channel}' has ${files.size} file(s) touching it with ops `
+      + `${[...ops].join(', ')}. The coupling is plausible but one-sided — e.g. a listener with no `
+      + 'visible dispatcher may mean the dispatcher is in code the analyzer did not scan, or the event '
+      + 'is fired by a library.',
+  };
+}
+
+function confidenceGlobalBinding(detail) {
+  // The shared-globals analyzer already filters out self-assign and
+  // same-file redeclaration (§2.6 fix), so every finding that makes it
+  // here involves ≥2 distinct files. Cross-file global overwrite is
+  // unambiguous: whichever script loads last wins, with no runtime error.
+  const files = new Set(detail.occurrences.map((o) => `${o.project}:${o.file}`));
+  return {
+    confidence: 'high',
+    reason:
+      `Global name '${detail.name}' is declared or assigned by ${files.size} files. At runtime, `
+      + 'whichever script loads last silently overwrites the earlier definition. The browser gives no '
+      + 'warning; TypeScript and ESLint do not see across classic-script boundaries. The coupling is '
+      + 'certain; the only question is which definition wins in your production load order.',
+  };
+}
+
+function confidenceStaleCapture(detail) {
+  // Stale module-scope captures are the most context-dependent pattern
+  // we emit — they are bugs in persistent-module runtimes (SPAs, SSR
+  // client bundles, workers, long-running Node) but not in MPAs with
+  // full page reloads. Always medium; the reason names the contexts.
+  return {
+    confidence: 'medium',
+    reason:
+      `Module-scope capture of a dynamic source (${detail.capturedVia}). This is a bug in runtime `
+      + 'models where modules persist across state changes: single-page apps (React Router, Vue Router, '
+      + 'Svelte navigation), SSR client bundles after hydration, web and service workers, and long-running '
+      + "Node services. It is lower-risk in classic multi-page apps (full page reload on every navigation), "
+      + "static-site builds, and CLI tools. Check how '" + (detail.name ?? '<anon>') + "' is read — if any "
+      + 'caller runs after the captured value could have changed, the stale value will be returned.',
+  };
+}
+
+function confidencePairedKeys(detail) {
+  // v1 finds the cluster; v2 (on the backlog) correlates across the
+  // codebase. The cluster itself is a factual observation (these keys
+  // ARE written together inside this function); the bug claim depends
+  // on whether another writer elsewhere touches only a subset.
+  return {
+    confidence: 'medium',
+    reason:
+      `Paired-write cluster: ${detail.storage} keys [${detail.keys.map((k) => `'${k}'`).join(', ')}] are `
+      + 'written together inside a single function. The cluster itself is a factual observation, not a '
+      + 'bug claim — the bug materializes when another writer elsewhere in the codebase touches only some '
+      + 'of these keys, breaking the pair. v1 of the detector finds the cluster but does not correlate '
+      + 'across files; v2 is on the backlog. Until then, treat this as "these keys must travel together" '
+      + 'and audit every writer of each key to ensure the full set is updated.',
+  };
 }
 
 // ---------- per-kind message + relatedFiles shaping ----------
@@ -339,10 +532,12 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // 6. Summary stats.
   const byKind = {};
   const bySeverity = { critical: 0, warning: 0, info: 0 };
+  const byConfidence = { high: 0, medium: 0, low: 0 };
   let findingsTouchingChange = 0;
   for (const w of wrapped) {
     byKind[w.kind] = (byKind[w.kind] ?? 0) + 1;
     bySeverity[w.severity] = (bySeverity[w.severity] ?? 0) + 1;
+    byConfidence[w.confidence] = (byConfidence[w.confidence] ?? 0) + 1;
     if (w.touchesChange) findingsTouchingChange++;
   }
 
@@ -368,6 +563,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       findingsTouchingChange: changedFilesAbs ? findingsTouchingChange : null,
       byKind,
       bySeverity,
+      byConfidence,
       blastRadius: blastRadius
         ? { total: blastRadius.length, byDepth, maxDepth }
         : null,
@@ -391,11 +587,14 @@ function wrap(kind, detail, rootById, changedFilesAbs) {
       return changedFilesAbs.has(abs);
     }),
   );
+  const { confidence, reason: confidenceReason } = confidenceFor(kind, detail);
   return {
     id: findingIdFor(kind, detail),
     fingerprint: fingerprintFor(kind, detail),
     kind,
     severity: severityFor(kind, detail),
+    confidence,
+    confidenceReason,
     message: messageFor(kind, detail),
     detail,
     relatedFiles,
