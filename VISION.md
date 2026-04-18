@@ -124,6 +124,56 @@ Two users, in priority order.
   wrapping *already-audited* open-source tools is dramatically easier to clear
   through security review than any single-vendor rewrite.
 
+## Where This Sits In The Ecosystem
+
+The positioning frame, stated positively: **code-intel runs alongside
+the tools a team already has — not instead of them.** Every tool in
+the adjacent space covers a different layer of the problem. A grounded
+comparison of each, with direct citations from each tool's own
+documentation, lives in [`COMPETITIVE_LANDSCAPE.md`](./COMPETITIVE_LANDSCAPE.md);
+the one-paragraph summary is:
+
+- Linters (ESLint, Biome, Oxlint, SonarJS) check code quality
+  **within a file**.
+- The type checker (TypeScript) checks types **within import graphs**,
+  and erases that information at every serialization boundary.
+- Query-based static analyzers (CodeQL, Semgrep) ship **engines**
+  and curated query packs that concentrate on **security**
+  vulnerabilities and data-flow attacks.
+- AI PR reviewers (Greptile, CodeRabbit, Cursor review) index the
+  whole codebase and emit human-language review comments — and
+  (self-admitted in their own marketing) miss cross-file bugs and
+  need a deterministic backstop.
+- Structural tools (Knip, dependency-cruiser, Madge, Skott) detect
+  dead code and import-graph cycles.
+- Knowledge-graph tools (graphify, CodeGraph, GraphGen4Code) build
+  generic codebase graphs for LLM context and navigation.
+- Runtime-validation libraries (Zod, Valibot, io-ts, ArkType) are a
+  **prevention** layer — they require the codebase to adopt them at
+  every boundary, and they detect nothing about code that does not.
+
+**Three characteristics, taken together, describe a slot no tool in
+that list fully occupies**: (1) a named, incident-driven catalogue of
+production-bug patterns, (2) cross-file / cross-serialization-boundary
+/ runtime-context-aware detection, (3) review-shaped output in an
+open-source, local-first package with no paid tier. That is the slot
+code-intel is built to fill.
+
+The positioning stance, operationalized:
+
+- **Phase 1 — gap-filler, connective tissue.** Primary framing.
+  code-intel fills a slot the ecosystem has left empty; it runs
+  alongside what a team already uses. The findings don't overlap,
+  because every other tool in the space explicitly targets a
+  different layer.
+- **Phase 2 — border-touching where we are demonstrably better.**
+  As the catalogue thickens, selectively overlap with Semgrep Pro
+  on infrastructure (we are free + local + OSS vs paid + SaaS) and
+  with AI reviewers on verification (we are deterministic + curated;
+  they are sampling-based and admit cross-file bug misses). We do
+  not touch borders with linters or the type checker — they win
+  their categories cleanly and there is no wedge.
+
 ## The North Star Test
 
 > *Could an AI agent, given only this tool's output, safely refactor a file it

@@ -163,6 +163,14 @@ Each of those fixtures reproduces a real production bug. See [`examples/README.m
 - **Not a type checker.** TypeScript already does that. `code-intel` starts where the type checker stops — at the string-literal contracts, the dynamic reads, and the cross-bundle coupling that no type system sees.
 - **Not a replacement for human review.** Findings are leads. Some are ship-blocking bugs; some are code smells a reviewer will legitimately dismiss. Recall over precision is deliberate — missing a real bug is worse than surfacing a false one, because false positives cost minutes and missed bugs cost incidents.
 
+## How this fits alongside your existing tools
+
+code-intel is **not** a replacement for anything. Linters (ESLint, Biome, Oxlint) check code quality within a file. Type checkers (TypeScript) check types within import graphs, and erase that information at every serialization boundary. Query-based analyzers (CodeQL, Semgrep) ship engines whose curated query packs concentrate on security vulnerabilities and data-flow attacks. AI PR reviewers (Greptile, CodeRabbit) index the whole codebase and emit human-language review comments — and explicitly admit in their own marketing that they miss cross-file bugs and need a deterministic backstop. Structural tools (Knip, dependency-cruiser, Madge) find dead code and import-graph cycles. Runtime validators (Zod, Valibot) are a prevention layer that requires the codebase to adopt them at every boundary.
+
+None of these catalogue the specific, named production-bug patterns that bite JS / TS apps at the implicit contracts between files — string-literal storage keys, `CustomEvent` channels, classic-script globals, module-scope captures of dynamic sources, paired-key clusters, serialized shape drift across `JSON.parse`. That is the slot this tool is built for. Run it alongside what you already have; the findings don't overlap with any of the above.
+
+A grounded comparison of each tool above, with direct quotes from their own documentation, lives in [`COMPETITIVE_LANDSCAPE.md`](./COMPETITIVE_LANDSCAPE.md).
+
 ## Status
 
 Early. Pre-1.0. The `impact` orchestrator — import-graph blast radius, `--since <ref>` diff-awareness, confidence and fingerprint per finding — runs every detector in one pass and is dogfooded against fixtures that reproduce real incidents. The JSON schema is a working contract, not a stable one. There's no configuration file, no suppression syntax, no MCP server yet — those are backlog items, not promises.
@@ -176,4 +184,5 @@ This README is a **snapshot**. It will be rewritten as the catalogue grows and t
 - [`DESIGN_DECISIONS.md`](./DESIGN_DECISIONS.md) — resolved product-facing decisions, `D<N>`.
 - [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) — unresolved product-facing questions, `Q<N>`.
 - [`BACKLOG.md`](./BACKLOG.md) — planned detectors, infrastructure items, exploratory ideas.
+- [`COMPETITIVE_LANDSCAPE.md`](./COMPETITIVE_LANDSCAPE.md) — grounded comparison against every adjacent tool, with direct citations from each tool's own docs. The proof layer for the "how is this different from X?" question.
 - [`examples/README.md`](./examples/README.md) — dogfood fixture apps reproducing real incidents.
