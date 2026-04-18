@@ -56,6 +56,7 @@ Planned:
 ## Ideas / exploratory
 
 - [ ] Self-improving suppression loop (see Q9)
-- [ ] Confidence field on findings (see Q10)
+- [x] Confidence field on findings (see Q10) — shipped (`confidence` + `confidenceReason` on every finding)
 - [ ] Blast-radius query ("what breaks if I change this file?")
+- [ ] `trace` subcommand — per-symbol graph query (all readers/writers/dispatchers/listeners for a named storage key, event channel, or global); Tier 1 is reshape-only, Tier 2 adds declared-symbol resolution (see Q12)
 - [ ] Run on a real multi-repo codebase — see what actually falls apart

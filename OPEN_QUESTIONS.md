@@ -229,3 +229,77 @@ wrappers). A project declares "function `X.emit` is a dispatch; function
 `X.on` is a listen; first string arg is the channel name." Without that
 declaration, reliable detection requires type-flow analysis (violates D5).
 Probably resolves together with Q2 and Q3 (config format).
+
+---
+
+## Q12 — Graph / trace API for a named symbol
+
+`code-intel trace --storage localStorage:app.session <roots>` →
+every reader, writer, and remover of that key across all projects,
+shaped as a graph an AI agent (or a human) can consume directly.
+
+**Why it matters:** The detectors already compute what amounts to a
+per-symbol graph — every reader / writer of a storage key, every
+dispatcher / listener of an event channel, every declarer / assigner of
+a global name — but that information is only reachable by running the
+full `impact` report and filtering the resulting findings by `id`. A
+first-class "give me the graph of X" query would:
+
+- Serve AI agents that need to reason about a specific symbol they're
+  about to modify ("what else touches `app.session` before I rename it?").
+- Serve humans auditing a single storage key / event channel before a
+  refactor without having to parse a 40-finding report.
+- Fit the planned MCP surface (Q7 already lists `whoReadsKey(storage, key)`
+  / `whoWritesKey(storage, key)` / `impactOf(file:line)` as candidate
+  primitives — this is the CLI manifestation of the same API).
+
+**Working assumption:** No `trace` subcommand. Users who want a
+per-symbol view run `impact --markdown` and visually filter by symbol
+id. Tolerable for humans; awkward for agents.
+
+**Needs:** Three separable tiers; decide how far the first shipped
+version reaches.
+
+- **Tier 1 — literal-target trace (≈1 day of work).** Subcommands
+  `trace --storage <storage:key>`, `trace --event <channel>`,
+  `trace --global <name>`, `trace --paired-cluster "k1,k2"`. Reshapes
+  existing detector output into a graph of nodes (sites with
+  `file:line:column`, `op`, `snippet`) and edges (read-from, writes-to,
+  dispatches, listens, captures). No new detection; pure presentation
+  on top of the analyzers we already ship. Covers the common agent-query
+  shapes.
+
+- **Tier 2 — declared-symbol trace (≈1 week of work).** `trace --symbol <name>`
+  for module-scope identifiers (functions, exported constants, etc.).
+  Requires a symbol-resolution pass using the TS compiler API's
+  `TypeChecker` / symbol table. Handles literal-name calls and
+  re-exports reliably; method dispatch (`obj.foo()`) is best-effort
+  without full type inference, same caveat as Q2 and Q11. Opens the
+  door to "find all call sites of function X across projects," which
+  is a natural companion to the import-graph blast radius.
+
+- **Tier 3 — not feasible statically.** Runtime happens-before
+  ordering across async callbacks, microtasks, event handlers, or
+  load-order-dependent scripts. Fundamentally not a syntactic
+  property. Approximation possible (intra-file lexical order, pair
+  dispatchers with listeners) but the exact "X runs before Y" answer
+  needs a runtime trace (DevTools timeline, profiler). Orthogonal tool;
+  explicitly out of scope.
+
+Design questions within the decision:
+
+- **Output format.** JSON graph `{ target, nodes, edges }` is the
+  minimum. Mermaid / DOT formatters for visual consumption are cheap
+  additions — ship one or all via `--format`? (Probably `json` default,
+  `mermaid` additive.)
+- **Subcommand vs flag on `impact`.** Should `trace` be a peer
+  subcommand of `impact`, or should `impact --trace <target>` reuse the
+  same runner? Peer subcommand is cleaner for MCP; flag is cheaper to
+  ship first and can always split later.
+- **Symbol scope for Tier 2.** Module-scope variables and functions are
+  clear. Class methods, enum members, type aliases — in scope or out?
+  Start narrow (module-scope only), expand on demand.
+- **Alignment with Q7 (MCP surface).** The CLI `trace` subcommand and
+  the MCP `whoReadsKey` / `whoWritesKey` tools answer the same
+  question. Their shapes should stay in sync; decide whether the
+  schema lives in the CLI surface, the MCP surface, or a shared one.
