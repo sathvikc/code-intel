@@ -28,6 +28,10 @@
 //     findings: [
 //       {
 //         id,                   // e.g. "shared-storage-key:app.session"
+//         fingerprint,          // 16-hex deterministic hash of the finding's
+//                               //   stable identity (see fingerprintFor below).
+//                               //   Use this to tag a finding persistently
+//                               //   across re-runs.
 //         kind,                 // finding kind (from analyzer)
 //         severity,             // "critical" | "warning" | "info"
 //         message,              // human-readable summary
@@ -48,6 +52,7 @@
 // `touchesChange` boolean and `severity` heuristic let consumers filter.
 
 import { execSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -152,6 +157,90 @@ function findingIdFor(kind, detail) {
   }
   const key = detail.key ?? detail.channel ?? detail.name ?? 'anon';
   return `${kind}:${key}`;
+}
+
+// ---------- fingerprint ----------
+//
+// Each finding carries a deterministic `fingerprint: "<16 hex chars>"`
+// derived from stable identity facts about the finding. Two purposes:
+//
+//   1. Lets consumers tag a finding ("this is noise", "this is real")
+//      by a key that survives re-runs. Without it, tagging is fuzzy and
+//      fragile.
+//   2. Is a future-proof foundation for a baseline/compare primitive and
+//      a memory/history layer; this slice does NOT build either — it just
+//      ships the field so data can accumulate now and those features can
+//      land later without a schema break.
+//
+// Stability rules, chosen so "the same logical finding" keeps its
+// fingerprint across typical codebase evolution:
+//
+//   - **Static** coupling findings (`shared-storage-key`, `shared-event-
+//     channel`, `shared-global-binding`) hash only the *logical identity*
+//     — kind + coupling key (+ storage for storage keys). Adding or
+//     removing occurrence files does NOT change the fingerprint; the
+//     finding is "the same coupling" whether 2 files or 20 touch it.
+//   - **Dynamic** findings are per-site by construction (the analyzers
+//     emit one finding per dynamic site), so the fingerprint must be
+//     per-site too — kind + `dynamic` tag + first occurrence's project,
+//     file, line, column. Moving the site to a new line changes the
+//     fingerprint; that is the intended behaviour for dynamic findings.
+//   - **Stale captures** are per-binding: kind + name + first
+//     occurrence's project + file. Relocating the binding to a new file
+//     changes the fingerprint (it IS a different binding then); renaming
+//     or line-number changes do not.
+//   - **Paired-keys** clusters are per-function: kind + storage + sorted
+//     keys + first occurrence's project + file + line. Moving the cluster
+//     inside the file changes the fingerprint; moving the whole file to
+//     a new path changes it too. Both reflect "different cluster."
+//
+// This is deliberately MINIMAL — no compare primitive, no history log,
+// no CLI surface, no stability-across-schema-versions guarantee. Just a
+// field that's deterministic today and useful to downstream consumers.
+function fingerprintFor(kind, detail) {
+  const parts = [kind];
+  switch (kind) {
+    case 'shared-storage-key':
+      if (detail.dynamic) {
+        const loc = detail.occurrences[0] ?? {};
+        parts.push('dynamic', detail.storage ?? '?', loc.project ?? '?', loc.file ?? '?', String(loc.line ?? 0), String(loc.column ?? 0));
+      } else {
+        parts.push(detail.storage ?? '?', detail.key ?? '');
+      }
+      break;
+    case 'shared-event-channel':
+      if (detail.dynamic) {
+        const loc = detail.occurrences[0] ?? {};
+        parts.push('dynamic', loc.project ?? '?', loc.file ?? '?', String(loc.line ?? 0), String(loc.column ?? 0));
+      } else {
+        parts.push(detail.channel ?? '');
+      }
+      break;
+    case 'shared-global-binding':
+      parts.push(detail.name ?? '');
+      break;
+    case 'stale-module-capture': {
+      const loc = detail.occurrences[0] ?? {};
+      parts.push(detail.name ?? '', loc.project ?? '?', loc.file ?? '?');
+      break;
+    }
+    case 'paired-keys': {
+      const loc = detail.occurrences[0] ?? {};
+      parts.push(
+        detail.storage ?? '?',
+        [...(detail.keys ?? [])].sort().join('+'),
+        loc.project ?? '?',
+        loc.file ?? '?',
+        String(loc.line ?? 0),
+      );
+      break;
+    }
+    default:
+      // Unknown kind: hash whatever identity the detail carries, so at
+      // least the fingerprint is deterministic per-run.
+      parts.push(JSON.stringify(detail));
+  }
+  return crypto.createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
 }
 
 // ---------- git integration (optional) ----------
@@ -304,6 +393,7 @@ function wrap(kind, detail, rootById, changedFilesAbs) {
   );
   return {
     id: findingIdFor(kind, detail),
+    fingerprint: fingerprintFor(kind, detail),
     kind,
     severity: severityFor(kind, detail),
     message: messageFor(kind, detail),

@@ -252,6 +252,108 @@ test('message: dynamic with no key and no expression still renders (dynamic)', (
   assert.ok(f.message.includes('(dynamic'), `message was: ${f.message}`);
 });
 
+// ---------- fingerprint ----------
+
+test('fingerprint: present on every finding, 16 hex chars', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+  write(a, 'src/stale.ts', `const x = document.cookie;`);
+  const r = analyzeProjects([a]);
+  assert.ok(r.findings.length >= 2);
+  for (const f of r.findings) {
+    assert.equal(typeof f.fingerprint, 'string');
+    assert.match(f.fingerprint, /^[0-9a-f]{16}$/, `bad fingerprint: ${f.fingerprint}`);
+  }
+});
+
+test('fingerprint: deterministic across runs with unchanged inputs', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+  write(a, 'src/emit.ts', `window.dispatchEvent(new CustomEvent('ping'));`);
+  write(a, 'src/on.ts', `window.addEventListener('ping', () => {});`);
+  write(a, 'src/stale.ts', `const x = document.cookie;`);
+
+  const r1 = analyzeProjects([a]);
+  const r2 = analyzeProjects([a]);
+  const map1 = new Map(r1.findings.map((f) => [f.id, f.fingerprint]));
+  const map2 = new Map(r2.findings.map((f) => [f.id, f.fingerprint]));
+  assert.deepEqual([...map1.entries()].sort(), [...map2.entries()].sort());
+});
+
+test('fingerprint: static storage-key finding is stable when a new reader file is added', () => {
+  // Adding another file that touches the same key should NOT change the
+  // fingerprint — it's the same logical coupling, just with one more site.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('app.session', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('app.session');`);
+  const before = analyzeProjects([a]).findings.find((f) => f.id === 'shared-storage-key:app.session');
+  assert.ok(before);
+
+  write(a, 'src/r2.ts', `localStorage.getItem('app.session');`);
+  const after = analyzeProjects([a]).findings.find((f) => f.id === 'shared-storage-key:app.session');
+  assert.ok(after);
+  assert.equal(before.fingerprint, after.fingerprint);
+});
+
+test('fingerprint: different storage keys get different fingerprints', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k1', 1); localStorage.getItem('k1');`);
+  write(a, 'src/x.ts', `localStorage.setItem('k2', 1); localStorage.getItem('k2');`);
+  const r = analyzeProjects([a]);
+  const f1 = r.findings.find((f) => f.id === 'shared-storage-key:k1');
+  const f2 = r.findings.find((f) => f.id === 'shared-storage-key:k2');
+  assert.ok(f1 && f2);
+  assert.notEqual(f1.fingerprint, f2.fingerprint);
+});
+
+test('fingerprint: localStorage vs sessionStorage with same key are distinct', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w1.ts', `localStorage.setItem('k', 1); localStorage.getItem('k');`);
+  write(a, 'src/w2.ts', `sessionStorage.setItem('k', 1); sessionStorage.getItem('k');`);
+  const r = analyzeProjects([a]);
+  const ls = r.findings.find((f) => f.kind === 'shared-storage-key' && f.detail.storage === 'localStorage');
+  const ss = r.findings.find((f) => f.kind === 'shared-storage-key' && f.detail.storage === 'sessionStorage');
+  assert.ok(ls && ss);
+  assert.notEqual(ls.fingerprint, ss.fingerprint);
+});
+
+test('fingerprint: dynamic findings are per-site (distinct fingerprints)', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.ts', `const k1 = 'x'; localStorage.setItem(k1, 1);`);
+  write(a, 'src/b.ts', `const k2 = 'y'; localStorage.setItem(k2, 1);`);
+  const r = analyzeProjects([a]);
+  const dyn = r.findings.filter((f) => f.kind === 'shared-storage-key' && f.detail.dynamic);
+  assert.equal(dyn.length, 2);
+  assert.notEqual(dyn[0].fingerprint, dyn[1].fingerprint);
+});
+
+test('fingerprint: paired-keys cluster differs by location', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/one.ts', `
+    export function a() {
+      sessionStorage.setItem('flags', '1');
+      sessionStorage.setItem('flags.ts', '1');
+    }
+    export function b() {
+      sessionStorage.setItem('flags', '2');
+      sessionStorage.setItem('flags.ts', '2');
+    }
+  `);
+  const r = analyzeProjects([a]);
+  const pairs = r.findings.filter((f) => f.kind === 'paired-keys');
+  assert.equal(pairs.length, 2);
+  assert.notEqual(pairs[0].fingerprint, pairs[1].fingerprint);
+});
+
 // ---------- renderMarkdown ----------
 
 test('renderMarkdown: produces sectioned output', () => {
