@@ -34,7 +34,7 @@ The script is self-contained. It reads from `examples/app-a/` and
    App A dispatches `'profile:changed'`, App B listens. Grep sees the
    string; code-intel surfaces the dispatcher-listener pair with its
    implicit payload contract.
-4. **Scenario 3 — The IXP paired-key bug.** Two storage keys that
+4. **Scenario 3 — The paired-key cache bug.** Two storage keys that
    must be written together, extracted automatically from the source.
    The most unique signal the tool produces.
 5. **Scenario 4 — Stale module-scope capture.** The context-dependent

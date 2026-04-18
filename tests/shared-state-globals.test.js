@@ -199,12 +199,12 @@ test('integration: single-file self-declaration emits NO finding', () => {
   assert.equal(result.findings.length, 0);
 });
 
-test('integration: multiple writes to same global in ONE file emit NO finding (regression: meganav §2.6)', () => {
+test('integration: multiple writes to same global in ONE file emit NO finding (regression: dogfood §2.6)', () => {
   // Three explicit window.X writes inside one file is intra-file code
   // (reassignment / reset), not a cross-bundle collision. Before the fix,
   // the detector counted occurrences >= 2 and emitted a finding even when
-  // all occurrences came from the same file — the meganav dogfood flagged
-  // this as a false positive on __meganavScrollLockOverlays.
+  // all occurrences came from the same file — a dogfood review flagged
+  // this as a false positive on __appScrollLockOverlays.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'solo' }));
   write(

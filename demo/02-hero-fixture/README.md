@@ -124,7 +124,7 @@ the CSR cache envelope. Feature flags flicker across navigations.
 reader, literal key. The `confidenceReason` names this as "the
 canonical shared-state shape."
 
-### 3. The IXP paired-key bug — `app.flags` + `app.flags.ts`
+### 3. The paired-key cache bug — `app.flags` + `app.flags.ts`
 
 **What Team Alpha built:** `paired-write.ts` caches the flag payload
 under `'app.flags'` and the TTL timestamp under `'app.flags.ts'`.
@@ -205,7 +205,7 @@ is "until the user signs out and back in."
 **Detector:** `stale-module-capture`.
 **Confidence:** `medium` — the reason string names the runtime
 contexts where this bites and where it is lower-risk. This is the
-PSE-question pattern: "is it actually a bug, or just noise?" — the
+reviewer-question pattern: "is it actually a bug, or just noise?" — the
 tool answers both, on the same finding.
 
 ### And two "must NOT emit" regressions
@@ -259,7 +259,7 @@ this is real?" without the reviewer having to dig.
 - **The fixture includes regressions for false positives the tool
   previously shipped.** That demonstrates the team takes noise
   seriously and kills it fast when dogfood surfaces it. This is a
-  credibility argument; every PSE will notice it.
+  credibility argument; every senior reviewer will notice it.
 
 ## When to show this
 

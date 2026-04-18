@@ -1,4 +1,4 @@
-// Self-assign scenario (regression fixture for meganav dogfood §2.6).
+// Self-assign scenario (regression fixture for dogfood review §2.6).
 //
 // Three explicit `window.X` writes live inside ONE file. This is intra-file
 // code — initialization, mutation, reset — not cross-bundle coupling. The

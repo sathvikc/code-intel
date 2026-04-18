@@ -4,7 +4,7 @@ Five real bug shapes that have shipped to production. For each one:
 how it bites, what the symptom looks like, and what code-intel finds
 that `grep`, ESLint, TypeScript, and IDE workspace search do not.
 
-This document is **read-by-itself-able**. You can hand it to a principal
+This document is **read-by-itself-able**. You can hand it to a staff
 engineer and have a conversation. No live demo required.
 
 Every code citation below points at a **real file in this repo** under
@@ -147,8 +147,8 @@ whole point.
 
 - Both files are syntactically classic scripts (the analyzer checks).
 - The detector already filters out same-file self-assignment
-  (fixed against a real false positive from our meganav dogfood; see
-  `§2.6` in `src/shared-state-globals.js`).
+  (fixed against a real false positive from an earlier dogfood review;
+  see `§2.6` in `src/shared-state-globals.js`).
 - The coupling is certain: both names *are* top-level; the browser
   *will* pick one as `window.parseCookie` at runtime.
 
@@ -255,7 +255,7 @@ mismatch surfaces immediately.
 
 ---
 
-# 3. The IXP bug — paired-key drift (`paired-keys`, P10)
+# 3. The paired-key cache bug — paired-key drift (`paired-keys`, P10)
 
 **The single most unique signal code-intel produces.** No other tool in
 our evaluation surfaced a paired-write cluster from raw code. This is
@@ -297,7 +297,7 @@ export function cacheFlags(flags: Record<string, unknown>): void {
 
 ```@/Users/sc/Documents/workspace/code-intel/examples/app-a/src/flags/paired-write.ts:20-23
 export function cacheFlagsMissingTs(flags: Record<string, unknown>): void {
-  // The IXP-bug shape: writer forgot the timestamp sibling.
+  // The paired-key cache bug shape: writer forgot the timestamp sibling.
   sessionStorage.setItem('app.flags', JSON.stringify(flags));
 }
 ```
@@ -367,7 +367,7 @@ is not mis-led into thinking the tool has proven a bug it has not.
 
 App A dispatches a `profile:changed` CustomEvent with
 `detail: { id, fields }` when the user updates their profile. App B,
-loaded on the same page (think: a meganav widget, a support chat, a
+loaded on the same page (think: a navigation widget, a support chat, a
 price-display sidebar), listens for `profile:changed` to refresh its
 view. Neither app imports the other; they communicate purely through
 `window.dispatchEvent` / `window.addEventListener`.
@@ -496,7 +496,7 @@ In an SPA, that "once" is the lifetime of the browser tab. The user
 upgrades mid-session. `accountTier` is still `'free'` until full
 page reload. The paywall keeps firing. Support tickets start arriving.
 
-## Important caveat (this is what your PSE will ask about)
+## Important caveat (this is what a careful reviewer will ask about)
 
 This pattern is **not a bug in every runtime model**. It matters in:
 
@@ -624,7 +624,7 @@ Usually three.
 
 ## If you only remember one thing
 
-The `confidence` + `confidenceReason` fields answer the PSE's
+The `confidence` + `confidenceReason` fields answer the reviewer's
 question up front, on every finding:
 
 > **"How do I know this is actually a bug and not noise?"**

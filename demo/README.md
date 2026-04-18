@@ -1,7 +1,7 @@
 # `demo/` — presenting code-intel to a room
 
 This folder is the single place to come when you need to show code-intel
-to a team, an architect, a platform group, or a sceptical principal. Each
+to a team, an architect, a platform group, or a sceptical reviewer. Each
 sub-folder is a **different format** for the same thing: a demo that
 makes the tool land. Pick whichever one fits the audience; any single one
 is self-contained.
@@ -29,7 +29,7 @@ The goal across all of them is to make four claims unmistakable:
 |---|---|---|
 | [`01-live-script/`](01-live-script/) | `demo.sh` runs 4–5 bug scenarios in a terminal, one command per story, with narration in the README. | Live presentation. Wants a room that can see a shared screen. ~8 minutes with time for questions. |
 | [`02-hero-fixture/`](02-hero-fixture/) | A believable 2-team mini-app under `team-alpha/` and `team-bravo/` with planted bugs — storage coupling, event channel drift, global collision, paired-key cluster, stale capture. | Need to make code-intel look like "tool on a codebase that could be ours" rather than "tool on toy fixtures". Pairs with any other format. |
-| [`03-bug-gallery/`](03-bug-gallery/) | Story-first walkthrough doc. Each pattern has: real-sounding scenario → code that triggers it → production symptom → code-intel output → *explicit* contrast with grep/eslint/IDE-search. | Async audience, or when you need something the PSE can read in 10 minutes and decide whether to champion. |
+| [`03-bug-gallery/`](03-bug-gallery/) | Story-first walkthrough doc. Each pattern has: real-sounding scenario → code that triggers it → production symptom → code-intel output → *explicit* contrast with grep/eslint/IDE-search. | Async audience, or when you need something a staff engineer can read in 10 minutes and decide whether to champion. |
 | [`04-dogfood/`](04-dogfood/) | Report from running code-intel against a public open-source codebase. Real findings on code no one planted. | Highest credibility. Answers "does this work on anything other than your fixtures?" Pairs well with a live demo as the closing slide. |
 
 ## Suggested running orders
@@ -43,7 +43,7 @@ The goal across all of them is to make four claims unmistakable:
   catches), then the live demo, then dogfood. The `confidence` story —
   "every finding is justified, here's the reason string" — is the
   anti-noise argument that closes the skeptic.
-- **Async PSE review.** Just `03-bug-gallery/README.md`. It's
+- **Async staff-engineer review.** Just `03-bug-gallery/README.md`. It's
   self-contained and written to be read alone.
 
 ## The anti-noise argument (read this before the demo)

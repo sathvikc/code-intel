@@ -320,7 +320,7 @@ function messageFor(kind, detail) {
  *
  * Before this fix, dynamic findings rendered as `'null'` — a template-literal
  * stringification of a JS `null` that looked like a literal string key in the
- * output. That was the bug reported in the meganav dogfood §2.5.
+ * output. That was the bug reported in an earlier dogfood review (§2.5).
  */
 function describeKey(key, dynamic, expression) {
   if (key != null) return `'${key}'`;

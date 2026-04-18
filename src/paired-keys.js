@@ -33,7 +33,7 @@
 //
 //   - Top-level (module-scope) paired writes — clustering is function-
 //     body only for now. Most real cases we've seen live inside a cache /
-//     setter / persist function, so the v1 catches the meganav-IXP shape.
+//     setter / persist function, so the v1 catches the paired-key cache shape.
 //   - "Other writer touches only one key of a known pair" (the cross-
 //     cluster lead mentioned in P10). Requires a second pass over all
 //     files after clusters are collected. Worth adding once we have real

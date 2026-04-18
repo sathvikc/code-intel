@@ -260,7 +260,7 @@ test('integration: single-key function emits NO finding; regression fixture for 
     a,
     'src/cache.ts',
     `export function cacheFlagsMissingTs(v) {
-       // The IXP bug shape — forgot to touch the ts sibling.
+       // The paired-key cache bug shape — forgot to touch the ts sibling.
        sessionStorage.setItem('app.flags', JSON.stringify(v));
      }
      export function unrelatedWrite(v) {

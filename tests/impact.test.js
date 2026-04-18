@@ -193,7 +193,7 @@ test('since: integrates with a real git repo', () => {
   assert.ok(r.summary.findingsTouchingChange >= 1);
 });
 
-// ---------- message rendering for dynamic keys/channels (regression: meganav §2.5) ----------
+// ---------- message rendering for dynamic keys/channels (regression: dogfood §2.5) ----------
 
 test('message: static storage key renders with literal name', () => {
   const a = mktmp();

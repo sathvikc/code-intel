@@ -237,7 +237,7 @@ test('schema shape: top-level + finding + occurrence fields', () => {
   assert.equal(typeof o.snippet, 'string');
 });
 
-// ---------- native-DOM-event suppression (regression: meganav §2.7) ----------
+// ---------- native-DOM-event suppression (regression: dogfood §2.7) ----------
 
 test('NATIVE_DOM_EVENTS includes canonical names', () => {
   for (const name of ['resize', 'scroll', 'click', 'popstate', 'message', 'load']) {

@@ -1,4 +1,4 @@
-// Paired-key write cluster (P10 fixture; regression for meganav dogfood §2.2).
+// Paired-key write cluster (P10 fixture; regression for dogfood review §2.2).
 //
 // `app.flags` stores the feature-flag payload; `app.flags.ts` stores the
 // timestamp readers use to decide whether the cache is still fresh. The
@@ -18,7 +18,7 @@ export function cacheFlags(flags: Record<string, unknown>): void {
 }
 
 export function cacheFlagsMissingTs(flags: Record<string, unknown>): void {
-  // The IXP-bug shape: writer forgot the timestamp sibling.
+  // The paired-key cache bug shape: writer forgot the timestamp sibling.
   sessionStorage.setItem('app.flags', JSON.stringify(flags));
 }
 

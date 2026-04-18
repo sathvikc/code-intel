@@ -179,9 +179,9 @@ narrate "Dispatcher in one project, listener in another. High confidence —"
 narrate "any change to the event.detail shape on one side breaks the other."
 pause
 
-# ---------- scenario 3: paired-keys / IXP bug ----------
+# ---------- scenario 3: paired-keys / paired-key cache bug ----------
 
-banner "Scenario 3 of 4  —  The IXP paired-key cache bug"
+banner "Scenario 3 of 4  —  The paired-key cache bug"
 
 narrate "A cache stores two keys that must travel together:"
 narrate "  'app.flags'     — the payload"
