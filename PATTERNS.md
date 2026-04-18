@@ -116,6 +116,15 @@ recall anchor when revisiting months later.
 - **Source:** generalised by the product owner from the specific case "writer stored `{ name }`, refactored to `{ firstName, lastName }`, readers across the codebase broke silently." Applies to any cross-file channel, not just storage.
 - **Note:** deliberately syntactic (D5). The TypeScript type system does not see across `JSON.parse` / storage / cookie / event boundaries, even in fully-typed codebases. A realistic shape-drift detector must derive shape summaries from the source code itself, not from types. This is also why no existing tool catches this — they either stop at the type layer, or they don't look at shapes at all.
 
+## P10 — Paired-key drift across co-located writes
+
+- **Symptoms:** a cache becomes stale in a way no single writer can explain. Readers see fresh data in one field and outdated data in another. Cache invalidation logic says "if the timestamp sibling is recent, reuse"; a writer updates the payload key but forgets the timestamp key, so later readers treat stale payload as fresh. Production-only in feel because the bug needs a specific interleaving of writes and reads to surface.
+- **Root cause:** two or more storage keys are designed to travel as a *pair* (`foo` + `foo-ts`, `flags` + `flags-version`, `cache` + `cache-etag`), but the language gives no way to express "these keys are always written together." The intent lives in one function where both `setItem` calls appear back-to-back; it doesn't live in the storage contract. Any subsequent writer who only touches one of the keys silently breaks the invariant.
+- **Static signal:** two or more `sessionStorage.setItem()` / `localStorage.setItem()` calls to **distinct literal keys** within the same function body, within a small window (≈5 statements) of each other — a co-located paired-write cluster. Once the cluster is recognised, any *other* writer of just one of those keys elsewhere in the codebase is a lead: "this function writes `foo` without `foo-ts`, but elsewhere these keys are written together."
+- **Relation to P4:** P4 is *one* key with two writers in different shapes (SSR script writes `{a}`, CSR loader writes `{b}`). P10 is *two* keys that should be written together but aren't, by the same or different writers. Both surface as stale reads, but the static signal and the fix are different.
+- **Detector:** not-yet-built. Candidate name: `paired-keys`. v1 definition: emit a `paired-keys` finding per co-write cluster (one function body, ≥2 distinct literal keys, ≤5 statements apart), listing the full key set. Additive to `shared-state` — the per-key coupling findings stay as they are; the paired-keys finding is layered on top.
+- **Source:** real incident — an enterprise codebase paired `meganav-featureflags` (the flag payload) with `meganav-featureflags-ts` (the timestamp used for TTL comparison). A writer updated the payload but didn't touch the timestamp; readers saw the old timestamp, decided the cache was fresh, and served stale flags. Called the "IXP bug" in the meganav dogfood review (§2.2).
+
 ---
 
 ## Adding a new entry

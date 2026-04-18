@@ -26,6 +26,7 @@ Planned:
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
 - [ ] `shape-drift` — compare write-shape vs read-shape across any shared channel (storage / cookies / events / URL); completes P4 (storage case) and addresses P9 broadly
+- [ ] `paired-keys` — co-located `setItem` calls to distinct literal keys inside one function body; flags drift when other writers touch only one of the pair (see P10)
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 
 ## Infrastructure
