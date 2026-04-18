@@ -225,3 +225,85 @@ single-op classification would lose information either way.
 
 **Reasoning:** Two occurrences is semantics-accurate, requires no schema
 change, and lets downstream consumers see exactly what the statement does.
+
+---
+
+## D8 — Same-file string-literal constant folding
+
+**Status:** active
+**Related:** D2, D3, D5, Q1, Q2
+**Supersedes-open-question:** Q8
+**Decision:** When a detector extracts a string key / channel / event name
+from an argument, a bare identifier that resolves within the same file
+to a non-reassigned `const` (or `let`) initialised with a `StringLiteral`
+/ `NoSubstitutionTemplateLiteral` is folded to that literal. The
+resulting occurrence is treated as a static key: it is NOT marked
+`dynamic`, and it groups across files with every other occurrence of
+the same literal. An optional `foldedFrom: <identifierName>` field is
+added to the occurrence so downstream consumers can tell the literal
+came through a constant and which constant it was.
+
+**Scope of v1:**
+
+- **Same file only.** Cross-file / imported / re-exported / barrel
+  constants are NOT followed. A second pass that threads symbols across
+  files is a separate, larger decision (see Q2).
+- **`const` and never-reassigned `let`.** `var` is excluded (hoisting
+  semantics).
+- **Bare string literals only.** No concatenation (`'a' + 'b'`), no
+  substituted templates, no `.` access, no function calls, no
+  ternaries.
+- **Plain identifier bindings only.** Destructuring patterns (`const
+  { K } = …`) are skipped.
+- **Reassignment is fatal, file-wide.** If a name is ever the target of
+  `=`, `+=`, `++`, `--`, or a destructuring-assignment target anywhere
+  in the file, no binding of that name folds. Conservative-but-safe.
+- **Temporal dead zone respected cheaply.** A use site must appear
+  strictly after its declaration's start position.
+- **Nearest-declaration wins.** Inner-scope shadowing resolves to the
+  innermost containing declaration.
+
+**Output schema impact (additive — honours D3):**
+
+Occurrences gain an optional `foldedFrom: string` field, present only
+when folding fired. No existing field's meaning changes. Inline
+literals continue to look identical to pre-folding output. Downstream
+consumers that ignore `foldedFrom` keep working unchanged; consumers
+that want to filter or explain "this match came via a constant" can use
+it.
+
+**Context:** A very common real-world pattern is a `constants.ts`-style
+top-of-file block (`const APP_SESSION_KEY = 'app.session';`) whose name
+is then passed to `localStorage.setItem`, `addEventListener`, etc.
+Before folding, such code landed in `dynamic: true` output, which is
+technically correct but practically useless — the key is in the same
+file, fully resolvable syntactically. The pattern appeared frequently
+enough that every detector that touched string keys was losing recall
+to it.
+
+**Alternatives considered:**
+
+- **Do nothing.** Rejected — the false-negative rate was high enough
+  that the detectors' usefulness on real codebases was being
+  systematically under-sold.
+- **Full symbol resolution via the TypeScript checker.** Rejected — it
+  violates D5 (syntactic only), costs startup time, and fails on
+  repos with broken types, which is exactly where these bugs tend to
+  live. The syntactic 70% is worth more than the full-program 100%
+  that never runs.
+- **Fold cross-file imports too.** Held back for a later slice. Needs
+  re-export resolution, barrel handling, default-vs-named distinction,
+  and alias tracking — too much surface for v1 given that the
+  same-file case alone carries most of the real-world wins.
+- **Fold concatenation (`'a' + '.b'`) and substituted templates.**
+  Deferred. Low incremental complexity, but no in-the-wild case has
+  demanded it yet; YAGNI.
+
+**Reasoning:** This is a pure recall multiplier across `shared-state`
+(both storage + events), `paired-keys`, and `shape-drift` — it raises
+the floor on every detector already shipped without changing any
+schema guarantee and without introducing any new detector surface.
+Scope kept narrow on purpose (D2 "ship partial, iterate"): we catch
+the easy 70% and log the 30% as the next slice. `foldedFrom` keeps
+the D4 spirit — consumers get structured metadata, not a fuzzy "maybe
+this came from a constant."

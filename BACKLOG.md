@@ -36,7 +36,8 @@ Planned:
 - [ ] MCP server POC — expose `impact.analyzeProjects` as an MCP tool (see Q7)
 - [ ] Configuration file format (see Q3)
 - [ ] Inline suppression comments (see Q5)
-- [ ] Dynamic key constant-folding, same-file only (see Q8)
+- [x] Same-file string-literal constant folding across `shared-state`, `shared-events`, `paired-keys`, `shape-drift` — resolves Q8 / see D8
+- [ ] Cross-file constant folding (imported string-literal constants, re-export chains, barrel files) — the v2 of the folding helper
 - [ ] Wrapper-module detection (see Q2)
 - [ ] Content-hash cache for AST parses (target <1s warm scan, per CODE-INTEL.md)
 - [ ] Nx integration — `npx nx show projects --affected` overlay on blast radius

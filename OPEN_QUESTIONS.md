@@ -156,23 +156,11 @@ Also decide: one MCP tool per analyzer, or one unified `query` tool.
 
 ## Q8 — Dynamic key constant-folding
 
-`const K = 'app.session'; localStorage.setItem(K, v);`
-
-**Why it matters:** Many codebases declare keys as constants and reuse
-them. Flagging these as `dynamic: true` is technically correct but
-practically useless — the key is known.
-
-**Working assumption:** Flagged as `dynamic: true` with the identifier
-text in the `expression` field. Reviewer can see it's a constant name and
-usually resolve it themselves.
-
-**Needs:** Decide how far to fold. Cheap options:
-- Same-file `const X = 'literal'` → resolve.
-- Same-file `const X = 'a' + 'b'` → resolve.
-- Imported constants across files → needs more machinery, probably out.
-
-Tension with D5 (syntactic only). A constant-folder that only handles
-same-file `const` declarations is still syntactic.
+**Resolved by D8.** Same-file `const` / never-reassigned `let` with a
+bare string-literal or no-substitution template initializer is now
+folded across every detector that extracts a string key or channel.
+Cross-file / concatenated / substituted-template cases are explicitly
+deferred — see D8 for the exact scope and the rejected alternatives.
 
 ---
 
