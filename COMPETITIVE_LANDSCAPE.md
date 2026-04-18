@@ -45,6 +45,24 @@ benchmark corpus is a separate (and still-unbuilt) project — see the
 - If you cannot verify a claim from the tool's own docs in under 10
   minutes of reading, remove the claim. This doc carries no speculation.
 
+## How to verify these citations in 10 seconds
+
+Every quoted claim below links to the source page using a **text
+fragment URL** — the `#:~:text=...` suffix. When you click such a
+link in Chrome, Edge, or Safari 16.4+, the browser scrolls to the
+quoted passage and highlights it automatically. No searching. No
+trusting our transcription. Click, see the exact text on the
+source, decide for yourself.
+
+If your browser does not support text fragments (notably older
+Firefox), the page still loads normally — you just don't get the
+automatic highlight. Search the page for the quoted phrase to find it.
+
+Every entry below also carries a **Verified** date. If the source
+page changes and the quote no longer matches, the entry is stale —
+update or remove it. Stale entries are worse than absent entries,
+because they lie with confidence.
+
 ---
 
 ## Tools verified
@@ -59,34 +77,41 @@ evidence — follows.
 
 - **What it does.** Per-file syntactic and semantic rules via a
   plugin ecosystem. Custom rules can be written in JavaScript.
-- **What it does not do.** Has no built-in project graph. As the Oxlint
-  team documents: *"ESLint evaluates rules per file and does not
-  provide a built-in project graph. Plugins such as
-  `eslint-plugin-import` must rebuild module resolution and the module
-  graph outside of ESLint's core."* ([source](https://oxc.rs/docs/guide/usage/linter/multi-file-analysis))
-  This means any cross-file analysis in the ESLint ecosystem is
-  plugin-driven, per-plugin, and not composable across rules.
+- **What it does not do.** Has no built-in project graph. Any
+  cross-file analysis in the ESLint ecosystem is plugin-driven,
+  per-plugin, and not composable across rules.
 - **Overlap with code-intel.** None. ESLint covers within-file code
   quality; code-intel covers cross-file implicit coupling,
   serialization-boundary shape drift, and runtime-context captures.
   The two are complementary — run both.
 
+> ESLint evaluates rules per file and does not provide a built-in
+> project graph. Plugins such as eslint-plugin-import must rebuild
+> module resolution and the module graph outside of ESLint's core.
+>
+> — [Oxlint docs, "Multi-file analysis → Performance and architecture"](https://oxc.rs/docs/guide/usage/linter/multi-file-analysis#:~:text=ESLint%20evaluates%20rules%20per%20file,outside%20of%20ESLint) · Verified 2026-04-18.
+
 #### Biome (v2)
 
-- **What it does.** 483 rules ported from ESLint, typescript-eslint,
-  and SonarJS; TypeScript type inference (v2+) for more powerful
-  single-file rules; formatter; fast. ([source](https://biomejs.dev/))
+- **What it does.** Fast Rust-based linter and formatter for JS, TS,
+  JSX, CSS, and GraphQL; TypeScript type inference (v2+) for more
+  powerful single-file rules; rules ported from ESLint,
+  typescript-eslint, and SonarJS.
 - **What it does not do.** The type inference is used for richer
   per-file rules — no documented cross-file bug-class detection in the
   rule catalogue.
 - **Overlap with code-intel.** None. Same relationship as ESLint.
 
+> Biome is a performant linter for JavaScript, TypeScript, JSX, CSS
+> and GraphQL that features 483 rules from ESLint, TypeScript ESLint,
+> and other sources.
+>
+> — [biomejs.dev homepage](https://biomejs.dev/#:~:text=483%20rules%20from%20ESLint) · Verified 2026-04-18.
+
 #### Oxlint
 
 - **What it does.** Fast ESLint-compatible linter. Ships multi-file
-  analysis as a first-class capability of the infrastructure — the
-  project builds a module graph in parallel and shares resolution
-  across rules. ([source](https://oxc.rs/docs/guide/usage/linter/multi-file-analysis))
+  analysis as a first-class capability of the infrastructure.
 - **What it does not do.** The multi-file infrastructure is used to
   make **existing** lint rules (no-cycle, unused-imports, etc.)
   faster. Oxlint's public rule set does not include storage-coupling,
@@ -94,16 +119,40 @@ evidence — follows.
   infrastructure is not the same thing as a multi-file bug catalogue.
 - **Overlap with code-intel.** None at the bug-class level.
 
-#### eslint-plugin-sonarjs / SonarJS analyzer
+> Multi-file analysis allows rules to use project-wide information,
+> such as the module dependency graph, instead of analyzing each file
+> in isolation.
+>
+> — [Oxlint docs, "Multi-file analysis"](https://oxc.rs/docs/guide/usage/linter/multi-file-analysis#:~:text=Multi-file%20analysis%20allows%20rules,each%20file%20in%20isolation) · Verified 2026-04-18.
 
-- **What it does.** 269 rules covering bugs, code smells, security
-  hotspots — all per-file. ([source](https://github.com/SonarSource/sonarjs))
-- **What it does not do.** No cross-file coupling detection. One
-  independent benchmark claims SonarJS misses 65% of security
-  vulnerabilities on a test corpus — meaningful because it implies
-  even in its own focus area, pure per-file rule catalogues have
-  substantial gaps. ([source](https://dev.to/ofri-peretz/sonarjs-has-269-rules-it-still-misses-65-of-security-vulnerabilities-3jh))
+#### SonarJS / eslint-plugin-sonarjs
+
+- **What it does.** Pattern-matching and control-flow rules for
+  bugs, code smells, and security patterns in JS / TS / CSS. Per
+  the features list on SonarJS's own GitHub README on the date below:
+  **479 JS rules**, **496 TS rules**, **29 CSS rules**. All per-file.
+- **What it does not do.** No cross-file coupling detection, no
+  shape-drift across serialization boundaries, no module-scope
+  capture detection. Everything within a file, nothing between
+  files.
+- **Note on package naming.** `eslint-plugin-sonarjs` v1.x on the
+  old repo shipped only a subset of SonarJS rules. As of v2.0+, the
+  ESLint plugin lives inside the main SonarJS repo and exposes the
+  full rule set. If you see "269 rules" quoted anywhere, that is the
+  old v1 subset count — stale.
 - **Overlap with code-intel.** None at the bug-class level.
+
+> 479 JS rules and [496 TS rules](https://rules.sonarsource.com/typescript)
+>
+> — [SonarJS GitHub README, "Features"](https://github.com/SonarSource/SonarJS#:~:text=479%20JS%20rules) · Verified 2026-04-18.
+
+> This repository contains eslint-plugin-sonarjs up to version ^1.0.0.
+> For versions >=2.0.0 please go to the repository of the SonarJS
+> analyzer. The new versions of eslint-plugin-sonarjs makes all
+> SonarJS rules available for ESLint users, instead of a subset as it
+> was with ^1.0.0 living here.
+>
+> — [eslint-plugin-sonarjs repo (moved notice)](https://github.com/SonarSource/eslint-plugin-sonarjs#:~:text=This%20repository%20contains%20eslint-plugin-sonarjs,instead%20of%20a%20subset) · Verified 2026-04-18.
 
 ### Type checker
 
@@ -154,54 +203,65 @@ evidence — follows.
   principle — write CodeQL queries equivalent to our detectors;
   nobody has, because that is not what CodeQL as a product is for.
 
+> **Verification method.** I did not quote CodeQL because the
+> relevant claim is about the *absence* of specific queries in the
+> catalogue, not a passage of text. I read the public query help
+> index directly, sampling three alphabetical ranges (A–D, D–H,
+> U–Y) plus the full page for keyword presence. No query in the
+> index targets: storage-key coupling across files, shape drift
+> across `JSON.parse`, paired-write clusters, stale module-scope
+> captures, duplicate static SVG IDs, proxied platform globals,
+> module-scope handler caching, or `CustomEvent` channel coupling.
+>
+> — [CodeQL JavaScript / TypeScript query help index](https://codeql.github.com/codeql-query-help/javascript/) · Verified 2026-04-18.
+
 #### Semgrep Community Edition (CE)
 
 - **What it does.** Lightweight pattern-matching engine with a
   community rule registry.
-- **What it does not do.** Cannot do cross-file analysis. *Direct
-  quote from their own GitHub README*: *"Note that in security
-  contexts, Semgrep Community Edition will miss many true positives
-  as it can only analyze code within the boundaries of a single
-  function or file. If you want to use Semgrep for security
-  purposes (SAST, SCA, or secrets scanning), the Semgrep AppSec
-  Platform is strongly recommended."*
-  ([source](https://github.com/semgrep/semgrep))
+- **What it does not do.** Cannot do cross-file analysis. The limit
+  is admitted in the tool's own README.
 - **Overlap with code-intel.** None for cross-file patterns, by
   design. CE is function / file-local only.
+
+> Note that in security contexts, Semgrep Community Edition will
+> miss many true positives as it can only analyze code within the
+> boundaries of a single function or file. If you want to use
+> Semgrep for security purposes (SAST, SCA, or secrets scanning),
+> the Semgrep AppSec Platform is strongly recommended.
+>
+> — [Semgrep GitHub README](https://github.com/semgrep/semgrep#:~:text=Semgrep%20Community%20Edition%20will,Platform%20is%20strongly%20recommended) · Verified 2026-04-18.
 
 #### Semgrep Pro (paid, server-hosted)
 
 - **What it does.** Adds cross-file (interfile) and cross-function
-  (intrafile) taint analysis. *Direct quote*: *"Use Semgrep Code's
-  cross-file (interfile) analysis to detect vulnerabilities across
-  files and folders within a project. By design, Semgrep open source
-  software, Semgrep Community Edition (CE) can only analyze
-  interactions within a single function, also known as
-  intraprocedural analysis."*
-  ([source](https://semgrep.dev/docs/semgrep-code/semgrep-pro-engine-intro))
+  (intrafile) taint analysis.
 - **What it does not do.** Pro's cross-file analysis is oriented
   around taint tracking for security vulnerabilities, not named
   production-bug pattern detection. Its rule library emphasises
   security patterns. Pro is also a paid, platform-hosted product
-  (not local-first open source). ([pricing](https://semgrep.dev/pricing/))
+  (not local-first open source). See [pricing](https://semgrep.dev/pricing/).
 - **Overlap with code-intel.** Closest competitor on **infrastructure**
   (cross-file analysis). Disjoint on **catalogue** (security taint vs
   production-bug patterns) and on **deployment model** (paid SaaS vs
   local-first open source).
+
+> Use Semgrep Code's cross-file (interfile) analysis to detect
+> vulnerabilities across files and folders within a project. By
+> design, Semgrep open source software, Semgrep Community Edition
+> (CE) can only analyze interactions within a single function, also
+> known as intraprocedural analysis.
+>
+> — [Semgrep Pro engine intro](https://semgrep.dev/docs/semgrep-code/semgrep-pro-engine-intro#:~:text=Use%20Semgrep%20Code,intraprocedural%20analysis) · Verified 2026-04-18.
 
 ### AI code reviewers
 
 #### Greptile
 
 - **What it does.** Indexes entire codebase; produces AI PR review
-  comments with codebase context. ([source](https://www.greptile.com))
-- **What it does not do (self-admitted).** *Direct quote from their
-  own content library on the limits of LLM-based review*: *"Models
-  are sampling-based, so the same PR can get different comments and
-  one pass can miss edge cases or cross-file bugs."*
-  ([source](https://www.greptile.com/what-is-ai-code-review))
-  The tool itself acknowledges cross-file bug misses as a structural
-  limit of the approach.
+  comments with codebase context. See [greptile.com](https://www.greptile.com).
+- **What it does not do (self-admitted).** Acknowledges in their own
+  content library that LLM-based review can miss cross-file bugs.
 - **Overlap with code-intel.** Adjacent, not competitive. Greptile
   generates human-language review comments; code-intel generates a
   deterministic, schema-validated finding set that an AI reviewer
@@ -209,25 +269,40 @@ evidence — follows.
   specific bug classes it covers. The two fit together: the LLM
   explains, the catalogue verifies.
 
+> Stochasticity. Models are sampling-based, so the same PR can get
+> different comments and one pass can miss edge cases or cross-file
+> bugs. Greptile counters this by grounding reviews in a full
+> repository index for steadier, repeatable results.
+>
+> — [Greptile, "AI Code Reviews: The Ultimate Guide" → Limitations](https://www.greptile.com/what-is-ai-code-review#:~:text=Models%20are%20sampling-based,repeatable%20results) · Verified 2026-04-18.
+
 #### CodeRabbit
 
-- **What it does.** AI PR reviewer with "built-in intelligence,"
-  codebase context, IDE + CLI integrations, Cursor integration.
-  ([source](https://www.coderabbit.ai/cursor))
+- **What it does.** AI PR reviewer with codebase context; IDE + CLI
+  integrations, Cursor integration.
 - **What it does not do (implicitly admitted by positioning).**
-  Explicitly positions itself as *"a backstop that flags
-  hallucination, logical errors, code smells, missed unit tests"*
-  ([source](https://www.coderabbit.ai/cli)) — i.e. the marketing
-  admits LLM review output itself needs verification. CodeRabbit's
-  blog on Context Engineering describes running *"verification
-  scripts on the review comments provided by the LLMs to make sure
-  that the review comments will meaningfully improve the
-  codebase"* ([source](https://www.coderabbit.ai/blog/context-engineering-ai-code-reviews))
-  — confirming LLM output is itself unreliable enough to require
-  an additional verification layer.
+  Positions itself as a *backstop* to LLM-generated code — which
+  implies LLM output itself is unreliable enough to need a backstop.
+  Also runs internal verification scripts on its own LLM output
+  before emitting review comments, confirming the same from a
+  different angle.
 - **Overlap with code-intel.** Same relationship as Greptile.
   code-intel is the kind of deterministic verification layer that
   LLM reviewers explicitly need.
+
+> CodeRabbit acts as a backstop that flags hallucination, logical
+> errors, code smells, missed unit tests, and more.
+>
+> — [CodeRabbit CLI page, "Catch AI slop"](https://www.coderabbit.ai/cli#:~:text=CodeRabbit%20acts%20as%20a%20backstop,missed%20unit%20tests) · Verified 2026-04-18.
+
+> Lastly, CodeRabbit also runs verification scripts on the review
+> comments provided by the LLMs to make sure that the review
+> comments will meaningfully improve the codebase. These verification
+> scripts are generated in the sandbox and any low value feedback is
+> automatically filtered out and not passed on to the user, helping
+> filter out most of the AI hallucinations that can sometimes occur.
+>
+> — [CodeRabbit blog, "Context Engineering" → Verification Scripts](https://www.coderabbit.ai/blog/context-engineering-ai-code-reviews#:~:text=CodeRabbit%20also%20runs%20verification%20scripts,can%20sometimes%20occur) · Verified 2026-04-18.
 
 ### Structural analyzers (dependency / dead code)
 
@@ -440,34 +515,45 @@ curated catalogue).
 
 ---
 
-## Citations (all verified by direct reading)
+## Source index
 
-- ESLint configuration docs — https://eslint.org/docs/latest/use/configure/configuration-files
-- Oxlint multi-file analysis docs (quoting ESLint's behaviour) — https://oxc.rs/docs/guide/usage/linter/multi-file-analysis
-- Biome — https://biomejs.dev/ and https://biomejs.dev/linter/
-- SonarJS GitHub — https://github.com/SonarSource/sonarjs
-- dev.to benchmark of SonarJS — https://dev.to/ofri-peretz/sonarjs-has-269-rules-it-still-misses-65-of-security-vulnerabilities-3jh
-- CodeQL JavaScript query help — https://codeql.github.com/codeql-query-help/javascript/
-- Semgrep GitHub README (the cross-file limit quote) — https://github.com/semgrep/semgrep
-- Semgrep Pro engine — https://semgrep.dev/docs/semgrep-code/semgrep-pro-engine-intro
-- Semgrep pricing — https://semgrep.dev/pricing/
-- Greptile — https://www.greptile.com
-- Greptile content library (the cross-file-bug admission) — https://www.greptile.com/what-is-ai-code-review
-- CodeRabbit Cursor page — https://www.coderabbit.ai/cursor
-- CodeRabbit CLI page (the "backstop" positioning) — https://www.coderabbit.ai/cli
-- CodeRabbit blog on context engineering (the verification-script admission) — https://www.coderabbit.ai/blog/context-engineering-ai-code-reviews
-- Knip — https://knip.dev/
-- dependency-cruiser npm — https://www.npmjs.com/package/dependency-cruiser
-- Skott — https://dev.to/antoinecoulon/introducing-skott-the-new-madge-1bfl
-- graphify — https://graphify.net/ and https://github.com/safishamsi/graphify
-- ChrisRoyse/CodeGraph — https://github.com/ChrisRoyse/CodeGraph
-- colbymchenry/codegraph — https://github.com/colbymchenry/codegraph
-- GraphGen4Code (IBM WALA) — https://wala.github.io/graph4code/
-- React `exhaustive-deps` rule — https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps
+Every claim above is cited inline at the point it is made. The table
+below is a compact index of primary sources — useful if you want to
+open the tool's own docs for your own verification, independent of
+our transcribed quotes.
+
+| Tool | Primary source |
+|---|---|
+| ESLint behaviour quoted by Oxlint | https://oxc.rs/docs/guide/usage/linter/multi-file-analysis |
+| Biome | https://biomejs.dev/ |
+| Oxlint multi-file analysis | https://oxc.rs/docs/guide/usage/linter/multi-file-analysis |
+| SonarJS | https://github.com/SonarSource/SonarJS |
+| eslint-plugin-sonarjs (moved notice) | https://github.com/SonarSource/eslint-plugin-sonarjs |
+| CodeQL JS query help | https://codeql.github.com/codeql-query-help/javascript/ |
+| Semgrep CE | https://github.com/semgrep/semgrep |
+| Semgrep Pro engine | https://semgrep.dev/docs/semgrep-code/semgrep-pro-engine-intro |
+| Semgrep pricing | https://semgrep.dev/pricing/ |
+| Greptile | https://www.greptile.com/what-is-ai-code-review |
+| CodeRabbit CLI | https://www.coderabbit.ai/cli |
+| CodeRabbit blog | https://www.coderabbit.ai/blog/context-engineering-ai-code-reviews |
+| Knip | https://knip.dev/ |
+| dependency-cruiser | https://www.npmjs.com/package/dependency-cruiser |
+| Skott | https://dev.to/antoinecoulon/introducing-skott-the-new-madge-1bfl |
+| graphify | https://github.com/safishamsi/graphify |
+| ChrisRoyse/CodeGraph | https://github.com/ChrisRoyse/CodeGraph |
+| colbymchenry/codegraph | https://github.com/colbymchenry/codegraph |
+| GraphGen4Code | https://wala.github.io/graph4code/ |
+| React `exhaustive-deps` | https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps |
+
+Inline citations use Chrome/Edge/Safari text-fragment URLs (`#:~:text=...`)
+so you can click any quote and jump to the exact passage on the source
+page. This index exists only for readers whose browsers don't support
+text fragments, or who want the bare source for their own searches.
 
 ---
 
 *Last reviewed: 2026-04-18.*
-*If you update a claim, re-verify against the linked source and bump
-this date. If a tool ships a capability that changes its relationship
-to code-intel, move the entry and update the summary matrix.*
+*If you update a claim, re-verify against the linked source, bump the
+per-entry "Verified" date, and bump this date. If a tool ships a
+capability that changes its relationship to code-intel, move the entry
+and update the summary matrix.*
