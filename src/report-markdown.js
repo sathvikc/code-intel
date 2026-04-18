@@ -32,6 +32,7 @@ const KIND_LABELS = {
   'shared-event-channel': 'Shared event channel',
   'shared-global-binding': 'Shared global binding',
   'stale-module-capture': 'Stale module-scope capture',
+  'paired-keys': 'Paired storage keys',
 };
 
 export function renderMarkdown(result) {

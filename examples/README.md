@@ -21,6 +21,7 @@ counterpart in the other app to exercise cross-project detection.
 | `profile:changed` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` ✓ |
 | Native DOM events (must-not-emit) — `resize` / `scroll` / `popstate` listeners are browser wire-up, not coupling | `app-a/src/events/native-events.ts` | `shared-events` ✓ (no finding) |
 | SSR-injected vs CSR-cached feature flags — same `sessionStorage['app.runtime-config']` key, two writers, shape mismatch | `app-a/src/flags/` | `shared-state` ✓ (detects coupling; reviewer/AI spots the shape mismatch) |
+| Paired-key write cluster — `app.flags` + `app.flags.ts` in one function; forgetting the ts sibling breaks the TTL check (P10) | `app-a/src/flags/paired-write.ts` | `paired-keys` ✓ |
 | Classic-script collision — both apps define the same top-level `function parseCookie(...)` in a .js script, later load overwrites earlier | `app-a/src/cookies/`, `app-b/src/cookies/` | `shared-globals` ✓ |
 | Self-assign (must-not-emit) — one file with multiple `window.X = …` writes to the same global; intra-file, not a collision | `app-a/src/globals/` | `shared-globals` ✓ (no finding) |
 | Stale module-scope capture — `const accountTier = getAccountTier()` at module scope, value frozen at import time | `app-a/src/account/` | `stale-captures` ✓ |

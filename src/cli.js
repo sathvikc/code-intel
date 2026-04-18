@@ -9,6 +9,7 @@
 //   code-intel shared-events   [paths...] [--pretty]
 //   code-intel shared-globals  [paths...] [--pretty]
 //   code-intel stale-captures  [paths...] [--pretty]
+//   code-intel paired-keys     [paths...] [--pretty]
 //
 // Multi-project is first-class: every path is a separate project; findings
 // are grouped across them so cross-repo coupling surfaces the same way
@@ -18,6 +19,7 @@ import * as webStorage from './shared-state-web-storage.js';
 import * as events from './shared-state-events.js';
 import * as globals from './shared-state-globals.js';
 import * as staleCapture from './stale-module-capture.js';
+import * as pairedKeys from './paired-keys.js';
 import * as impact from './impact.js';
 import { renderMarkdown } from './report-markdown.js';
 
@@ -73,6 +75,18 @@ const ANALYZER_COMMANDS = {
       `auto-detected readers: ${s.detectedReaders}`,
     ],
   },
+  'paired-keys': {
+    analyzer: pairedKeys,
+    summarize: (s) => [
+      `code-intel / paired-keys`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  localStorage:  ${s.byStorage.localStorage ?? 0}`,
+      `  sessionStorage:${s.byStorage.sessionStorage ?? 0}`,
+      `keys (total):    ${s.totalKeys}`,
+      `keys (max/cluster): ${s.maxKeys}`,
+    ],
+  },
 };
 
 const USAGE = `Usage:
@@ -81,6 +95,7 @@ const USAGE = `Usage:
   code-intel shared-events   [paths...] [--pretty]
   code-intel shared-globals  [paths...] [--pretty]
   code-intel stale-captures  [paths...] [--pretty]
+  code-intel paired-keys     [paths...] [--pretty]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -92,6 +107,9 @@ Subcommands:
                   defining the same top-level helper on window).
   stale-captures  Detect module-scope captures of dynamic sources (cookie / storage
                   / DOM / navigator / fetch frozen at import time).
+  paired-keys     Detect intra-function setItem clusters — storage keys designed to
+                  be written together (e.g. value + timestamp). Any writer who touches
+                  only one of the pair breaks the cache-freshness invariant.
 
 Args:
   paths           One or more project roots. Defaults to "." if omitted.

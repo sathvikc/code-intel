@@ -55,6 +55,7 @@ import * as webStorage from './shared-state-web-storage.js';
 import * as events from './shared-state-events.js';
 import * as globals from './shared-state-globals.js';
 import * as staleCapture from './stale-module-capture.js';
+import * as pairedKeys from './paired-keys.js';
 import * as importGraph from './import-graph.js';
 import { resolveProject } from './project.js';
 
@@ -74,6 +75,11 @@ function severityFor(kind, detail) {
       return projects.size > 1 ? 'critical' : 'warning';
     }
     case 'stale-module-capture':
+      return 'warning';
+    case 'paired-keys':
+      // Intra-function co-writes. Warning by default — the bug only bites
+      // once another writer touches one of the paired keys without the
+      // others, which we don't correlate in v1.
       return 'warning';
     default:
       return 'info';
@@ -99,6 +105,9 @@ function messageFor(kind, detail) {
       return `Global name '${detail.name}' declared by ${files.size} files${crossProj}`;
     case 'stale-module-capture':
       return `'${detail.name}' captures dynamic source at module scope (via ${detail.capturedVia})`;
+    case 'paired-keys':
+      return `${detail.storage} paired-write cluster: [${detail.keys.map((k) => `'${k}'`).join(', ')}]`
+        + ` — all callers should update together`;
     default:
       return 'finding';
   }
@@ -133,6 +142,14 @@ function relatedFilesFor(detail) {
 }
 
 function findingIdFor(kind, detail) {
+  if (kind === 'paired-keys') {
+    // A paired-keys finding is intra-function, so id includes the first
+    // occurrence's file + line to disambiguate multiple clusters that
+    // happen to share a key set across the codebase.
+    const keySig = `${detail.storage}:${[...detail.keys].sort().join('+')}`;
+    const loc = detail.occurrences[0];
+    return `${kind}:${keySig}@${loc?.project ?? '?'}:${loc?.file ?? '?'}:${loc?.line ?? 0}`;
+  }
   const key = detail.key ?? detail.channel ?? detail.name ?? 'anon';
   return `${kind}:${key}`;
 }
@@ -197,6 +214,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const evtResult = events.analyzeProjects(projectRoots);
   const glbResult = globals.analyzeProjects(projectRoots);
   const stlResult = staleCapture.analyzeProjects(projectRoots);
+  const prsResult = pairedKeys.analyzeProjects(projectRoots);
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
   const projects = projectRoots.map(resolveProject);
@@ -208,6 +226,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   for (const f of evtResult.findings) wrapped.push(wrap('shared-event-channel', f, rootById, changedFilesAbs));
   for (const f of glbResult.findings) wrapped.push(wrap('shared-global-binding', f, rootById, changedFilesAbs));
   for (const f of stlResult.findings) wrapped.push(wrap('stale-module-capture', f, rootById, changedFilesAbs));
+  for (const f of prsResult.findings) wrapped.push(wrap('paired-keys', f, rootById, changedFilesAbs));
 
   // 4. Sort: change-touching first, then severity, then stable by id.
   const SEV_ORDER = { critical: 0, warning: 1, info: 2 };
