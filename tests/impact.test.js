@@ -193,6 +193,65 @@ test('since: integrates with a real git repo', () => {
   assert.ok(r.summary.findingsTouchingChange >= 1);
 });
 
+// ---------- message rendering for dynamic keys/channels (regression: meganav §2.5) ----------
+
+test('message: static storage key renders with literal name', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('app.session', t);`);
+  write(a, 'src/r.ts', `localStorage.getItem('app.session');`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.id === 'shared-storage-key:app.session');
+  assert.ok(f);
+  assert.ok(f.message.includes(`'app.session'`), `message was: ${f.message}`);
+  assert.ok(!f.message.includes(`'null'`));
+});
+
+test('message: dynamic storage key renders as (dynamic: <expr>), not null', () => {
+  // Regression: before the fix, messageFor template-literal-stringified a JS
+  // null into the string `'null'`, producing output like
+  //   `localStorage key 'null' is touched by 1 files`
+  // which looks like the literal key "null". Now it says `(dynamic: cacheKey)`.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/x.ts', `const cacheKey = 'foo'; localStorage.setItem(cacheKey, 1);`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'shared-storage-key');
+  assert.ok(f, 'expected a shared-storage-key finding');
+  assert.equal(f.detail.dynamic, true);
+  assert.ok(!f.message.includes(`'null'`), `message should not contain 'null': ${f.message}`);
+  assert.ok(f.message.includes('(dynamic'), `message should mark dynamic: ${f.message}`);
+  assert.ok(f.message.includes('cacheKey'), `message should surface the expression text: ${f.message}`);
+});
+
+test('message: dynamic event channel renders as (dynamic: <expr>), not null', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/x.ts', `const eventName = 'boom'; window.dispatchEvent(new CustomEvent(eventName));`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'shared-event-channel');
+  assert.ok(f);
+  assert.equal(f.detail.dynamic, true);
+  assert.ok(!f.message.includes(`'null'`));
+  assert.ok(f.message.includes('(dynamic'));
+  assert.ok(f.message.includes('eventName'));
+});
+
+test('message: dynamic with no key and no expression still renders (dynamic)', () => {
+  // Defense-in-depth: `dispatchEvent(e)` where `e` is a bound variable
+  // produces dynamic=true but the analyzer's expression text is the
+  // variable name. Even if we had an edge case where expression were
+  // empty, the message must not leak `'null'`.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/x.ts', `const e = new CustomEvent('x'); window.dispatchEvent(e);`);
+  const r = analyzeProjects([a]);
+  const f = r.findings.find((x) => x.kind === 'shared-event-channel' && x.detail.dynamic);
+  assert.ok(f);
+  assert.ok(!f.message.includes(`'null'`), `message was: ${f.message}`);
+  assert.ok(f.message.includes('(dynamic'), `message was: ${f.message}`);
+});
+
 // ---------- renderMarkdown ----------
 
 test('renderMarkdown: produces sectioned output', () => {

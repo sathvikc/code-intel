@@ -87,10 +87,14 @@ function messageFor(kind, detail) {
   const files = new Set(detail.occurrences?.map((o) => `${o.project}:${o.file}`) ?? []);
   const crossProj = projects.size > 1 ? ` across ${projects.size} projects` : '';
   switch (kind) {
-    case 'shared-storage-key':
-      return `${detail.storage} key '${detail.key}' is touched by ${files.size} files${crossProj}`;
-    case 'shared-event-channel':
-      return `CustomEvent channel '${detail.channel}' used by ${files.size} files${crossProj}`;
+    case 'shared-storage-key': {
+      const label = describeKey(detail.key, detail.dynamic, detail.expression);
+      return `${detail.storage} key ${label} is touched by ${files.size} files${crossProj}`;
+    }
+    case 'shared-event-channel': {
+      const label = describeKey(detail.channel, detail.dynamic, detail.expression);
+      return `CustomEvent channel ${label} used by ${files.size} files${crossProj}`;
+    }
     case 'shared-global-binding':
       return `Global name '${detail.name}' declared by ${files.size} files${crossProj}`;
     case 'stale-module-capture':
@@ -98,6 +102,25 @@ function messageFor(kind, detail) {
     default:
       return 'finding';
   }
+}
+
+/**
+ * Render a channel / key label for human-readable messages.
+ *
+ *   static:   'app.session'
+ *   dynamic:  (dynamic: cacheKey)         — when the analyzer has the expression text
+ *   dynamic:  (dynamic)                   — when it doesn't
+ *
+ * Before this fix, dynamic findings rendered as `'null'` — a template-literal
+ * stringification of a JS `null` that looked like a literal string key in the
+ * output. That was the bug reported in the meganav dogfood §2.5.
+ */
+function describeKey(key, dynamic, expression) {
+  if (key != null) return `'${key}'`;
+  if (dynamic && typeof expression === 'string' && expression.length > 0) {
+    return `(dynamic: ${expression})`;
+  }
+  return '(dynamic)';
 }
 
 function relatedFilesFor(detail) {
