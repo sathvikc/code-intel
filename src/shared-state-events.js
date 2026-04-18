@@ -8,6 +8,13 @@
 // Syntactic only (D5). Multi-project first-class (D1). Recall over precision
 // (D2). Every occurrence carries `detectedVia` (D4).
 //
+// Native DOM event suppression: if a channel name is a known native browser
+// event (`resize`, `scroll`, `click`, `popstate`, `message`, …) AND every
+// occurrence on it is a listener (no `dispatch`), the finding is dropped
+// as noise — it's just browser event wire-up, not cross-file coupling.
+// A dispatch on a native-named channel is kept (synthesizing a native
+// event IS a coupling signal: file A triggers, file B listens).
+//
 // Output schema version: 0.1
 // Finding kind: "shared-event-channel"
 
@@ -31,6 +38,41 @@ const METHOD_OPS = {
   addEventListener: 'listen',
   removeEventListener: 'unlisten',
 };
+
+// Known native DOM events. A channel whose name matches one of these AND
+// has no `dispatch` occurrence in scan is suppressed — two files listening
+// to `'resize'` is not coupling, it's two independent window-event
+// handlers. Kept conservative: if a name is ambiguous, it's left off the
+// list so the finding surfaces (recall-first, D2).
+export const NATIVE_DOM_EVENTS = new Set([
+  // Lifecycle / navigation
+  'load', 'DOMContentLoaded', 'beforeunload', 'unload',
+  'pageshow', 'pagehide', 'visibilitychange',
+  'popstate', 'hashchange',
+  // Network / storage / postMessage
+  'online', 'offline', 'message', 'storage',
+  // Viewport / layout
+  'resize', 'scroll',
+  // Focus
+  'focus', 'blur',
+  // Pointer / mouse
+  'click', 'dblclick', 'contextmenu',
+  'mousedown', 'mouseup', 'mousemove', 'mouseenter', 'mouseleave', 'mouseover', 'mouseout', 'wheel',
+  // Keyboard
+  'keydown', 'keyup', 'keypress',
+  // Touch
+  'touchstart', 'touchend', 'touchmove', 'touchcancel',
+  // Form
+  'submit', 'change', 'input', 'reset', 'invalid',
+  // Clipboard / drag
+  'copy', 'cut', 'paste',
+  'dragstart', 'drag', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
+  // Media
+  'play', 'pause', 'ended', 'timeupdate', 'loadedmetadata', 'canplay', 'seeked',
+  // Animation / transition
+  'animationstart', 'animationend', 'animationiteration',
+  'transitionstart', 'transitionend', 'transitionrun', 'transitioncancel',
+]);
 
 /**
  * Determine if an expression refers to a global event target — either
@@ -221,12 +263,21 @@ export function analyzeProjects(projectRoots) {
     }
   }
 
-  const findings = [...groups.values()].sort((a, b) => {
-    if (a.channel === null && b.channel !== null) return 1;
-    if (a.channel !== null && b.channel === null) return -1;
-    if (a.channel !== b.channel) return a.channel < b.channel ? -1 : 1;
-    return 0;
-  });
+  // Drop listen-only native-DOM-event findings — browser wire-up, not
+  // coupling. See the module-header comment for rationale.
+  const findings = [...groups.values()]
+    .filter((f) => {
+      if (f.dynamic) return true;
+      if (!NATIVE_DOM_EVENTS.has(f.channel)) return true;
+      const hasDispatch = f.occurrences.some((o) => o.op === 'dispatch');
+      return hasDispatch;
+    })
+    .sort((a, b) => {
+      if (a.channel === null && b.channel !== null) return 1;
+      if (a.channel !== null && b.channel === null) return -1;
+      if (a.channel !== b.channel) return a.channel < b.channel ? -1 : 1;
+      return 0;
+    });
 
   return {
     version: SCHEMA_VERSION,

@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   analyzeSource,
   analyzeProjects,
+  NATIVE_DOM_EVENTS,
   SCHEMA_VERSION,
   ANALYZER_ID,
 } from '../src/shared-state-events.js';
@@ -234,4 +235,70 @@ test('schema shape: top-level + finding + occurrence fields', () => {
   assert.equal(typeof o.line, 'number');
   assert.equal(typeof o.column, 'number');
   assert.equal(typeof o.snippet, 'string');
+});
+
+// ---------- native-DOM-event suppression (regression: meganav §2.7) ----------
+
+test('NATIVE_DOM_EVENTS includes canonical names', () => {
+  for (const name of ['resize', 'scroll', 'click', 'popstate', 'message', 'load']) {
+    assert.ok(NATIVE_DOM_EVENTS.has(name), `expected '${name}' in NATIVE_DOM_EVENTS`);
+  }
+});
+
+test('drops listen-only native-event findings in ONE file', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(
+    a,
+    'src/one.ts',
+    `window.addEventListener('resize', () => {});
+     window.addEventListener('scroll', () => {});
+     window.addEventListener('popstate', () => {});`,
+  );
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 0);
+});
+
+test('drops listen-only native-event findings across multiple files', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.ts', `window.addEventListener('resize', h);`);
+  write(a, 'src/b.ts', `window.addEventListener('resize', h);`);
+  write(a, 'src/c.ts', `globalThis.addEventListener('scroll', h);`);
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 0);
+});
+
+test('KEEPS native-named channel if at least one occurrence is dispatch', () => {
+  // Synthesising a native-named event IS a coupling signal — file A
+  // programmatically fires a native event, file B's listener runs.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/emit.ts', `window.dispatchEvent(new CustomEvent('resize'));`);
+  write(a, 'src/listen.ts', `window.addEventListener('resize', h);`);
+  const result = analyzeProjects([a]);
+  const f = result.findings.find((x) => x.channel === 'resize');
+  assert.ok(f, 'expected finding for synthesized resize dispatch');
+  assert.equal(f.occurrences.length, 2);
+});
+
+test('KEEPS custom-named channels even when listen-only (no dispatch)', () => {
+  // `profile:changed` is not a native event — a single-site listener
+  // is still a weak coupling signal (the dispatcher may be out of scope).
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/listen.ts', `window.addEventListener('profile:changed', h);`);
+  const result = analyzeProjects([a]);
+  assert.ok(result.findings.some((f) => f.channel === 'profile:changed'));
+});
+
+test('dynamic findings are NOT filtered by native-event rule', () => {
+  // Dynamic channel names are per-site findings and can't be matched
+  // against the native whitelist. Always pass through.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.ts', `window.addEventListener(eventName, h);`);
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].dynamic, true);
 });

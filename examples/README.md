@@ -19,6 +19,7 @@ counterpart in the other app to exercise cross-project detection.
 |---|---|---|
 | `app.session` in `localStorage` (login writes, api-client reads) | `app-a/src/auth/` | `shared-state` ✓ |
 | `profile:changed` CustomEvent (app-a dispatches, app-b listens) | `app-a/src/events/`, `app-b/src/events/` | `shared-events` ✓ |
+| Native DOM events (must-not-emit) — `resize` / `scroll` / `popstate` listeners are browser wire-up, not coupling | `app-a/src/events/native-events.ts` | `shared-events` ✓ (no finding) |
 | SSR-injected vs CSR-cached feature flags — same `sessionStorage['app.runtime-config']` key, two writers, shape mismatch | `app-a/src/flags/` | `shared-state` ✓ (detects coupling; reviewer/AI spots the shape mismatch) |
 | Classic-script collision — both apps define the same top-level `function parseCookie(...)` in a .js script, later load overwrites earlier | `app-a/src/cookies/`, `app-b/src/cookies/` | `shared-globals` ✓ |
 | Self-assign (must-not-emit) — one file with multiple `window.X = …` writes to the same global; intra-file, not a collision | `app-a/src/globals/` | `shared-globals` ✓ (no finding) |
