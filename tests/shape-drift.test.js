@@ -459,6 +459,54 @@ test('integration: skips node_modules and dist', () => {
   }
 });
 
+test('integration: folds same-file `const KEY = "literal"` on both write and read sides', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `
+    const PROFILE_KEY = 'user.profile';
+    export function save(p) {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify({ name: p.name, age: p.age }));
+    }
+  `);
+  write(a, 'src/r.ts', `
+    const PROFILE_KEY = 'user.profile';
+    export function load() {
+      const u = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
+      return u.firstName + ' ' + u.lastName;
+    }
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  const f = r.findings[0];
+  assert.equal(f.key, 'user.profile');
+  assert.deepEqual(f.writeShape, ['age', 'name']);
+  assert.deepEqual(f.readShape, ['firstName', 'lastName']);
+  const writeOcc = f.occurrences.find((o) => o.op === 'write');
+  const readOcc = f.occurrences.find((o) => o.op === 'read');
+  assert.equal(writeOcc.foldedFrom, 'PROFILE_KEY');
+  assert.equal(readOcc.foldedFrom, 'PROFILE_KEY');
+});
+
+test('integration: folded key on one side pairs with inline literal on the other', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('user.profile', JSON.stringify({ name: 'x' }));`);
+  write(a, 'src/r.ts', `
+    const KEY = 'user.profile';
+    const u = JSON.parse(localStorage.getItem(KEY) || '{}');
+    console.log(u.firstName);
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  const f = r.findings[0];
+  assert.equal(f.key, 'user.profile');
+  const readOcc = f.occurrences.find((o) => o.op === 'read');
+  const writeOcc = f.occurrences.find((o) => o.op === 'write');
+  assert.equal(readOcc.foldedFrom, 'KEY');
+  // The inline-literal write has no foldedFrom.
+  assert.equal(writeOcc.foldedFrom, undefined);
+});
+
 test('integration: schema shape', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));

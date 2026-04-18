@@ -211,10 +211,14 @@ test('message: dynamic storage key renders as (dynamic: <expr>), not null', () =
   // Regression: before the fix, messageFor template-literal-stringified a JS
   // null into the string `'null'`, producing output like
   //   `localStorage key 'null' is touched by 1 files`
-  // which looks like the literal key "null". Now it says `(dynamic: cacheKey)`.
+  // which looks like the literal key "null". Now it says `(dynamic: cacheKey(id))`.
+  //
+  // Note: a same-file `const K = 'literal'` would fold (see
+  // fold-string-literals.js), so this uses a function-call key to stay
+  // genuinely dynamic.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/x.ts', `const cacheKey = 'foo'; localStorage.setItem(cacheKey, 1);`);
+  write(a, 'src/x.ts', `localStorage.setItem(cacheKey(id), 1);`);
   const r = analyzeProjects([a]);
   const f = r.findings.find((x) => x.kind === 'shared-storage-key');
   assert.ok(f, 'expected a shared-storage-key finding');
@@ -225,9 +229,11 @@ test('message: dynamic storage key renders as (dynamic: <expr>), not null', () =
 });
 
 test('message: dynamic event channel renders as (dynamic: <expr>), not null', () => {
+  // Genuinely-dynamic channel: the name is a function call, which is
+  // opaque to the fold helper.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/x.ts', `const eventName = 'boom'; window.dispatchEvent(new CustomEvent(eventName));`);
+  write(a, 'src/x.ts', `window.dispatchEvent(new CustomEvent(eventName(id)));`);
   const r = analyzeProjects([a]);
   const f = r.findings.find((x) => x.kind === 'shared-event-channel');
   assert.ok(f);
@@ -309,9 +315,11 @@ test('confidence: cross-project literal storage key is high and reason mentions 
 });
 
 test('confidence: dynamic storage key is low', () => {
+  // Same-file `const K = 'literal'` folds, so use a truly opaque key
+  // (function call) to keep the finding dynamic.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/x.ts', `const k = 'foo'; localStorage.setItem(k, 1);`);
+  write(a, 'src/x.ts', `localStorage.setItem(computeKey(), 1);`);
   const r = analyzeProjects([a]);
   const f = r.findings.find((x) => x.kind === 'shared-storage-key' && x.detail.dynamic);
   assert.ok(f);
@@ -432,10 +440,11 @@ test('fingerprint: localStorage vs sessionStorage with same key are distinct', (
 });
 
 test('fingerprint: dynamic findings are per-site (distinct fingerprints)', () => {
+  // Need genuinely-dynamic keys on both sides (same-file const folds).
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/a.ts', `const k1 = 'x'; localStorage.setItem(k1, 1);`);
-  write(a, 'src/b.ts', `const k2 = 'y'; localStorage.setItem(k2, 1);`);
+  write(a, 'src/a.ts', `localStorage.setItem(keyFor('a'), 1);`);
+  write(a, 'src/b.ts', `localStorage.setItem(keyFor('b'), 1);`);
   const r = analyzeProjects([a]);
   const dyn = r.findings.filter((f) => f.kind === 'shared-storage-key' && f.detail.dynamic);
   assert.equal(dyn.length, 2);

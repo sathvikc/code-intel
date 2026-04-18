@@ -56,6 +56,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'shape-drift';
@@ -125,21 +126,21 @@ function isJsonParseCall(node) {
 
 /**
  * True if the call is `<storage>.getItem(literalKey)` and returns the key;
- * null otherwise.
+ * null otherwise. Accepts same-file folded identifier keys so that
+ * `const K = 'user.profile'; JSON.parse(localStorage.getItem(K) || '{}')`
+ * resolves to `K`'s literal value. `foldedFrom` carries the identifier
+ * name when folding fired, null otherwise.
  */
-function storageGetItemKey(node) {
+function storageGetItemKey(node, sourceFile, foldMap) {
   if (!ts.isCallExpression(node)) return null;
   if (!ts.isPropertyAccessExpression(node.expression)) return null;
   const pa = node.expression;
   if (!ts.isIdentifier(pa.name) || pa.name.text !== 'getItem') return null;
   const storage = storageNameOf(pa.expression);
   if (!storage) return null;
-  const arg = node.arguments[0];
-  if (!arg) return null;
-  if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
-    return { storage, key: arg.text };
-  }
-  return null; // dynamic key → out of scope for v1
+  const resolved = resolveStringArg(node.arguments[0], sourceFile, foldMap);
+  if (resolved.dynamic || resolved.value === null) return null;
+  return { storage, key: resolved.value, foldedFrom: resolved.foldedFrom };
 }
 
 /**
@@ -356,6 +357,7 @@ export function analyzeSource(code, filePath) {
     /* setParentNodes */ true,
     scriptKindFor(filePath),
   );
+  const foldMap = buildFoldMap(sf);
   const writes = [];
   const reads = [];
 
@@ -374,13 +376,14 @@ export function analyzeSource(code, filePath) {
       if (ts.isIdentifier(pa.name) && pa.name.text === 'setItem') {
         const storage = storageNameOf(pa.expression);
         if (storage) {
-          const keyArg = node.arguments[0];
-          if (keyArg && (ts.isStringLiteral(keyArg) || ts.isNoSubstitutionTemplateLiteral(keyArg))) {
+          const resolvedKey = resolveStringArg(node.arguments[0], sf, foldMap);
+          if (!resolvedKey.dynamic && resolvedKey.value !== null) {
             const shape = extractWriteShape(node);
             const { line, column } = locOf(node);
             writes.push({
               storage,
-              key: keyArg.text,
+              key: resolvedKey.value,
+              foldedFrom: resolvedKey.foldedFrom,
               line,
               column,
               snippet: snippetOf(node),
@@ -396,13 +399,14 @@ export function analyzeSource(code, filePath) {
       const rawArg = node.arguments[0];
       if (rawArg) {
         const inner = unwrapParseArg(rawArg);
-        const hit = storageGetItemKey(inner);
+        const hit = storageGetItemKey(inner, sf, foldMap);
         if (hit) {
           const shape = extractReadShape(node, sf);
           const { line, column } = locOf(node);
           reads.push({
             storage: hit.storage,
             key: hit.key,
+            foldedFrom: hit.foldedFrom,
             line,
             column,
             snippet: snippetOf(node),
@@ -476,29 +480,37 @@ export function analyzeProjects(projectRoots) {
     if (writeOnlyKeys.length === 0 && readOnlyKeys.length === 0) continue;
 
     const occurrences = [
-      ...writes.map((w) => ({
-        project: w.project,
-        file: w.file,
-        line: w.line,
-        column: w.column,
-        op: 'write',
-        shape: w.opaque ? null : w.keys,
-        opaque: w.opaque,
-        reason: w.reason ?? null,
-        snippet: w.snippet,
-      })),
-      ...reads.map((r) => ({
-        project: r.project,
-        file: r.file,
-        line: r.line,
-        column: r.column,
-        op: 'read',
-        shape: r.opaque ? null : r.keys,
-        opaque: r.opaque,
-        reason: r.reason ?? null,
-        partial: r.partial ?? undefined,
-        snippet: r.snippet,
-      })),
+      ...writes.map((w) => {
+        const occ = {
+          project: w.project,
+          file: w.file,
+          line: w.line,
+          column: w.column,
+          op: 'write',
+          shape: w.opaque ? null : w.keys,
+          opaque: w.opaque,
+          reason: w.reason ?? null,
+          snippet: w.snippet,
+        };
+        if (w.foldedFrom) occ.foldedFrom = w.foldedFrom;
+        return occ;
+      }),
+      ...reads.map((r) => {
+        const occ = {
+          project: r.project,
+          file: r.file,
+          line: r.line,
+          column: r.column,
+          op: 'read',
+          shape: r.opaque ? null : r.keys,
+          opaque: r.opaque,
+          reason: r.reason ?? null,
+          partial: r.partial ?? undefined,
+          snippet: r.snippet,
+        };
+        if (r.foldedFrom) occ.foldedFrom = r.foldedFrom;
+        return occ;
+      }),
     ];
 
     findings.push({

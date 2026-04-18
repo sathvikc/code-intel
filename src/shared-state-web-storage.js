@@ -14,6 +14,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'shared-state.web-storage';
@@ -71,15 +72,20 @@ function storageNameOf(node) {
 
 /**
  * Extract a key from a key-bearing node (method call arg or element-access
- * argumentExpression). Returns { key, dynamic, expressionText }.
+ * argumentExpression). Returns { key, dynamic, expressionText, foldedFrom }.
+ *
+ * Goes through the shared same-file fold helper so that
+ * `const K = 'app.session'; localStorage.setItem(K, …)` resolves to the
+ * literal instead of being flagged dynamic. `foldedFrom` carries the
+ * identifier name when the value was folded, null otherwise.
  */
-function extractKey(argNode, sourceFile) {
-  if (!argNode) return { key: null, dynamic: true, expressionText: '' };
-  if (ts.isStringLiteral(argNode) || ts.isNoSubstitutionTemplateLiteral(argNode)) {
-    return { key: argNode.text, dynamic: false, expressionText: argNode.text };
-  }
-  const text = argNode.getText(sourceFile);
-  return { key: null, dynamic: true, expressionText: text };
+function extractKey(argNode, sourceFile, foldMap) {
+  const { value, dynamic, expressionText, foldedFrom } = resolveStringArg(
+    argNode,
+    sourceFile,
+    foldMap,
+  );
+  return { key: value, dynamic, expressionText, foldedFrom };
 }
 
 /**
@@ -114,9 +120,10 @@ export function analyzeSource(code, filePath) {
     /* setParentNodes */ true,
     scriptKindFor(filePath),
   );
+  const foldMap = buildFoldMap(sourceFile);
   const occurrences = [];
 
-  function record(node, storage, key, dynamic, expressionText, op, detectedVia) {
+  function record(node, storage, key, dynamic, expressionText, op, detectedVia, foldedFrom) {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
     occurrences.push({
@@ -126,6 +133,7 @@ export function analyzeSource(code, filePath) {
       expressionText,
       op,
       detectedVia,
+      foldedFrom: foldedFrom ?? null,
       line: line + 1,
       column: character + 1,
       snippet,
@@ -141,8 +149,8 @@ export function analyzeSource(code, filePath) {
       if (op) {
         const storage = storageNameOf(propAccess.expression);
         if (storage) {
-          const { key, dynamic, expressionText } = extractKey(node.arguments[0], sourceFile);
-          record(node, storage, key, dynamic, expressionText, op, 'method-call');
+          const { key, dynamic, expressionText, foldedFrom } = extractKey(node.arguments[0], sourceFile, foldMap);
+          record(node, storage, key, dynamic, expressionText, op, 'method-call', foldedFrom);
           // Fall through and let the walker recurse. Pattern 3 will skip the
           // method name (it's in STORAGE_API_MEMBERS), so there's no double
           // counting, and argument-nested storage accesses are still visited.
@@ -154,10 +162,10 @@ export function analyzeSource(code, filePath) {
     if (ts.isElementAccessExpression(node)) {
       const storage = storageNameOf(node.expression);
       if (storage) {
-        const { key, dynamic, expressionText } = extractKey(node.argumentExpression, sourceFile);
+        const { key, dynamic, expressionText, foldedFrom } = extractKey(node.argumentExpression, sourceFile, foldMap);
         const ops = classifyAccessOps(node);
         for (const op of ops) {
-          record(node, storage, key, dynamic, expressionText, op, op === 'remove' ? 'delete' : 'indexed-access');
+          record(node, storage, key, dynamic, expressionText, op, op === 'remove' ? 'delete' : 'indexed-access', foldedFrom);
         }
       }
     }
@@ -177,7 +185,7 @@ export function analyzeSource(code, filePath) {
         if (storage) {
           const ops = classifyAccessOps(node);
           for (const op of ops) {
-            record(node, storage, keyName, false, keyName, op, op === 'remove' ? 'delete' : 'property-access');
+            record(node, storage, keyName, false, keyName, op, op === 'remove' ? 'delete' : 'property-access', null);
           }
         }
       }
@@ -239,7 +247,7 @@ export function analyzeProjects(projectRoots) {
             occurrences: [],
           });
         }
-        groups.get(groupKey).occurrences.push({
+        const pushed = {
           project: project.id,
           file: rel,
           line: occ.line,
@@ -247,7 +255,9 @@ export function analyzeProjects(projectRoots) {
           op: occ.op,
           detectedVia: occ.detectedVia,
           snippet: occ.snippet,
-        });
+        };
+        if (occ.foldedFrom) pushed.foldedFrom = occ.foldedFrom;
+        groups.get(groupKey).occurrences.push(pushed);
       }
     }
   }

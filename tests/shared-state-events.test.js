@@ -82,16 +82,45 @@ test('bare dispatchEvent(...) is treated as implicit window.*', () => {
 });
 
 test('flags dynamic channel names (non-literal first arg)', () => {
+  // `eventName` has no visible declaration in the file, and `lookupName()`
+  // is a function call — both stay dynamic. The `const k = …` + fold case
+  // is covered by the next test.
   const occ = analyzeSource(
-    `const k = 'profile:changed';
-     window.dispatchEvent(new CustomEvent(k));
+    `window.dispatchEvent(new CustomEvent(lookupName()));
      window.addEventListener(eventName, h);`,
     'f.ts',
   );
   assert.equal(occ.length, 2);
   assert.ok(occ.every(o => o.dynamic === true));
   assert.ok(occ.every(o => o.name === null));
+  assert.ok(occ.every(o => o.foldedFrom === null));
   assert.ok(occ[0].expressionText.length > 0);
+});
+
+test('folds same-file `const CH = "literal"` on dispatch and listener', () => {
+  const occ = analyzeSource(
+    `const CHANNEL = 'profile:changed';
+     window.dispatchEvent(new CustomEvent(CHANNEL));
+     window.addEventListener(CHANNEL, h);`,
+    'f.ts',
+  );
+  assert.equal(occ.length, 2);
+  assert.ok(occ.every(o => o.dynamic === false));
+  assert.ok(occ.every(o => o.name === 'profile:changed'));
+  assert.ok(occ.every(o => o.foldedFrom === 'CHANNEL'));
+});
+
+test('does NOT fold a reassigned channel binding', () => {
+  const occ = analyzeSource(
+    `let k = 'profile:changed';
+     k = 'other';
+     window.addEventListener(k, h);`,
+    'f.ts',
+  );
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].dynamic, true);
+  assert.equal(occ[0].name, null);
+  assert.equal(occ[0].foldedFrom, null);
 });
 
 test('dispatch with pre-constructed event is dynamic', () => {

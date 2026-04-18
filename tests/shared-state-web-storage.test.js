@@ -47,15 +47,57 @@ test('resolves window.localStorage and globalThis.localStorage', () => {
 });
 
 test('flags dynamic keys (non-literal first argument)', () => {
+  // Note: `const k = 'app.session'; setItem(k, …)` folds to the literal
+  // (see fold-string-literals.js); the still-dynamic case is the
+  // substituted template literal.
   const src = `
-    const k = 'app.session';
-    localStorage.setItem(k, 'v');
     localStorage.getItem(\`prefix.\${id}\`);
+    localStorage.setItem(lookupKey(), 'v');
   `;
   const occ = analyzeSource(src, 'f.ts');
   assert.equal(occ.length, 2);
   assert.ok(occ.every(o => o.dynamic === true));
+  assert.ok(occ.every(o => o.key === null));
+  assert.ok(occ.every(o => o.foldedFrom === null));
+});
+
+test('folds same-file `const K = "literal"` to a static key', () => {
+  const src = `
+    const SESSION_KEY = 'app.session';
+    localStorage.setItem(SESSION_KEY, 'v');
+    localStorage.getItem(SESSION_KEY);
+  `;
+  const occ = analyzeSource(src, 'f.ts');
+  assert.equal(occ.length, 2);
+  assert.ok(occ.every(o => o.dynamic === false));
+  assert.ok(occ.every(o => o.key === 'app.session'));
+  assert.ok(occ.every(o => o.foldedFrom === 'SESSION_KEY'));
+});
+
+test('does NOT fold a reassigned `let`', () => {
+  const src = `
+    let k = 'app.session';
+    k = 'other';
+    localStorage.setItem(k, 'v');
+  `;
+  const occ = analyzeSource(src, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].dynamic, true);
   assert.equal(occ[0].key, null);
+  assert.equal(occ[0].foldedFrom, null);
+});
+
+test('folds through element access as well', () => {
+  const src = `
+    const K = 'app.session';
+    const v = localStorage[K];
+  `;
+  const occ = analyzeSource(src, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].key, 'app.session');
+  assert.equal(occ[0].dynamic, false);
+  assert.equal(occ[0].foldedFrom, 'K');
+  assert.equal(occ[0].detectedVia, 'indexed-access');
 });
 
 test('ignores unrelated method calls and identifiers', () => {

@@ -51,6 +51,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'paired-keys';
@@ -107,7 +108,7 @@ function storageNameOf(node) {
  * declaration (e.g. as a statement of the outer function's body), the
  * walker returns zero hits for it.
  */
-function findLiteralSetItems(rootNode, sourceFile) {
+function findLiteralSetItems(rootNode, sourceFile, foldMap) {
   const results = [];
   function visit(node) {
     if (isFunctionLike(node)) return;
@@ -117,13 +118,17 @@ function findLiteralSetItems(rootNode, sourceFile) {
       if (ts.isIdentifier(propAccess.name) && propAccess.name.text === 'setItem') {
         const storage = storageNameOf(propAccess.expression);
         if (storage) {
-          const keyArg = node.arguments[0];
-          if (keyArg && (ts.isStringLiteral(keyArg) || ts.isNoSubstitutionTemplateLiteral(keyArg))) {
+          // Accept inline string literals AND same-file folded constants.
+          // A paired-key cluster is about the KEY contract, not about
+          // whether the author typed the literal at the call site.
+          const resolved = resolveStringArg(node.arguments[0], sourceFile, foldMap);
+          if (!resolved.dynamic && resolved.value !== null) {
             const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
             const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
             results.push({
               storage,
-              key: keyArg.text,
+              key: resolved.value,
+              foldedFrom: resolved.foldedFrom,
               line: line + 1,
               column: character + 1,
               snippet,
@@ -190,13 +195,14 @@ export function analyzeSource(code, filePath) {
     /* setParentNodes */ true,
     scriptKindFor(filePath),
   );
+  const foldMap = buildFoldMap(sf);
   const clusters = [];
 
   function processBody(block) {
     if (!block || !ts.isBlock(block)) return;
     const perStatement = block.statements.map((stmt, stmtIdx) => ({
       stmtIdx,
-      hits: findLiteralSetItems(stmt, sf),
+      hits: findLiteralSetItems(stmt, sf, foldMap),
     }));
     for (const cluster of clusterize(perStatement)) {
       // De-dupe keys preserving first-seen order.
@@ -211,12 +217,16 @@ export function analyzeSource(code, filePath) {
       clusters.push({
         storage: cluster[0].storage,
         keys,
-        occurrences: cluster.map((h) => ({
-          key: h.key,
-          line: h.line,
-          column: h.column,
-          snippet: h.snippet,
-        })),
+        occurrences: cluster.map((h) => {
+          const occ = {
+            key: h.key,
+            line: h.line,
+            column: h.column,
+            snippet: h.snippet,
+          };
+          if (h.foldedFrom) occ.foldedFrom = h.foldedFrom;
+          return occ;
+        }),
       });
     }
   }

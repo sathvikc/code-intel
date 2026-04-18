@@ -167,15 +167,45 @@ test('top-level (module-scope) setItems are NOT clustered in v1', () => {
 
 test('dynamic (non-literal) keys are skipped', () => {
   const clusters = analyzeSource(
-    `export function f(v) {
-       const k = 'x';
-       localStorage.setItem(k, v);
+    `export function f(v, id) {
+       localStorage.setItem(\`prefix.\${id}\`, v);
        localStorage.setItem('y', v);
      }`,
     'f.ts',
   );
-  // Only one literal-key setItem in the body — not a cluster.
+  // Only one resolvable-key setItem in the body — not a cluster.
   assert.equal(clusters.length, 0);
+});
+
+test('folds same-file `const K = "literal"` into a cluster', () => {
+  const clusters = analyzeSource(
+    `export function cache(v) {
+       const FLAGS = 'app.flags';
+       const FLAGS_TS = 'app.flags.ts';
+       sessionStorage.setItem(FLAGS, JSON.stringify(v));
+       sessionStorage.setItem(FLAGS_TS, String(Date.now()));
+     }`,
+    'f.ts',
+  );
+  assert.equal(clusters.length, 1);
+  assert.deepEqual(clusters[0].keys, ['app.flags', 'app.flags.ts']);
+  assert.equal(clusters[0].occurrences[0].foldedFrom, 'FLAGS');
+  assert.equal(clusters[0].occurrences[1].foldedFrom, 'FLAGS_TS');
+});
+
+test('mixes inline literal + folded constant in the same cluster', () => {
+  const clusters = analyzeSource(
+    `export function cache(v) {
+       const FLAGS_TS = 'app.flags.ts';
+       sessionStorage.setItem('app.flags', JSON.stringify(v));
+       sessionStorage.setItem(FLAGS_TS, String(Date.now()));
+     }`,
+    'f.ts',
+  );
+  assert.equal(clusters.length, 1);
+  assert.deepEqual(clusters[0].keys, ['app.flags', 'app.flags.ts']);
+  assert.equal(clusters[0].occurrences[0].foldedFrom, undefined);
+  assert.equal(clusters[0].occurrences[1].foldedFrom, 'FLAGS_TS');
 });
 
 test('mixed localStorage + sessionStorage do NOT merge', () => {

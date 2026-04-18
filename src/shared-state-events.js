@@ -22,6 +22,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'shared-state.events';
@@ -92,15 +93,19 @@ function globalHostOf(node) {
  * For `dispatchEvent(new CustomEvent('foo', {...}))` the first arg is a
  * NewExpression whose own first arg is the channel name.
  * For `addEventListener('foo', handler)` the first arg is the name directly.
- * Returns { name, dynamic, expressionText }.
+ * Returns { name, dynamic, expressionText, foldedFrom }.
+ *
+ * Goes through the same-file fold helper so `const CH = 'profile:changed';
+ * window.addEventListener(CH, …)` resolves to the literal. `foldedFrom`
+ * carries the identifier name when folding fired, null otherwise.
  */
-function extractChannelFromListenerArg(argNode, sourceFile) {
-  if (!argNode) return { name: null, dynamic: true, expressionText: '' };
-  return extractStringOrDynamic(argNode, sourceFile);
+function extractChannelFromListenerArg(argNode, sourceFile, foldMap) {
+  if (!argNode) return { name: null, dynamic: true, expressionText: '', foldedFrom: null };
+  return extractStringOrDynamic(argNode, sourceFile, foldMap);
 }
 
-function extractChannelFromDispatchArg(argNode, sourceFile) {
-  if (!argNode) return { name: null, dynamic: true, expressionText: '' };
+function extractChannelFromDispatchArg(argNode, sourceFile, foldMap) {
+  if (!argNode) return { name: null, dynamic: true, expressionText: '', foldedFrom: null };
   // `new CustomEvent('foo', …)` or `new Event('foo', …)`
   if (ts.isNewExpression(argNode)) {
     const ctor = argNode.expression;
@@ -110,19 +115,21 @@ function extractChannelFromDispatchArg(argNode, sourceFile) {
       null;
     if (ctorName === 'CustomEvent' || ctorName === 'Event') {
       const nameArg = argNode.arguments?.[0];
-      if (nameArg) return extractStringOrDynamic(nameArg, sourceFile);
-      return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile) };
+      if (nameArg) return extractStringOrDynamic(nameArg, sourceFile, foldMap);
+      return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
     }
   }
   // Fallback: unknown dispatch argument (variable, already-constructed event, etc.)
-  return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile) };
+  return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
 }
 
-function extractStringOrDynamic(node, sourceFile) {
-  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-    return { name: node.text, dynamic: false, expressionText: node.text };
-  }
-  return { name: null, dynamic: true, expressionText: node.getText(sourceFile) };
+function extractStringOrDynamic(node, sourceFile, foldMap) {
+  const { value, dynamic, expressionText, foldedFrom } = resolveStringArg(
+    node,
+    sourceFile,
+    foldMap,
+  );
+  return { name: value, dynamic, expressionText, foldedFrom };
 }
 
 /**
@@ -136,9 +143,10 @@ export function analyzeSource(code, filePath) {
     /* setParentNodes */ true,
     scriptKindFor(filePath),
   );
+  const foldMap = buildFoldMap(sourceFile);
   const occurrences = [];
 
-  function record(node, host, name, dynamic, expressionText, op, detectedVia) {
+  function record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom) {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
     occurrences.push({
@@ -148,6 +156,7 @@ export function analyzeSource(code, filePath) {
       expressionText,
       op,
       detectedVia,
+      foldedFrom: foldedFrom ?? null,
       line: line + 1,
       column: character + 1,
       snippet,
@@ -166,11 +175,11 @@ export function analyzeSource(code, filePath) {
           const host = globalHostOf(callee.expression);
           if (host) {
             const detectedVia = op === 'dispatch' ? 'custom-event' : 'event-listener';
-            const { name, dynamic, expressionText } =
+            const { name, dynamic, expressionText, foldedFrom } =
               op === 'dispatch'
-                ? extractChannelFromDispatchArg(node.arguments[0], sourceFile)
-                : extractChannelFromListenerArg(node.arguments[0], sourceFile);
-            record(node, host, name, dynamic, expressionText, op, detectedVia);
+                ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap)
+                : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap);
+            record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom);
           }
         }
       }
@@ -183,11 +192,11 @@ export function analyzeSource(code, filePath) {
         const op = METHOD_OPS[callee.text];
         if (op) {
           const detectedVia = op === 'dispatch' ? 'custom-event' : 'event-listener';
-          const { name, dynamic, expressionText } =
+          const { name, dynamic, expressionText, foldedFrom } =
             op === 'dispatch'
-              ? extractChannelFromDispatchArg(node.arguments[0], sourceFile)
-              : extractChannelFromListenerArg(node.arguments[0], sourceFile);
-          record(node, 'window', name, dynamic, expressionText, op, detectedVia);
+              ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap)
+              : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap);
+          record(node, 'window', name, dynamic, expressionText, op, detectedVia, foldedFrom);
         }
       }
     }
@@ -249,7 +258,7 @@ export function analyzeProjects(projectRoots) {
             occurrences: [],
           });
         }
-        groups.get(groupKey).occurrences.push({
+        const pushed = {
           project: project.id,
           file: rel,
           line: occ.line,
@@ -258,7 +267,9 @@ export function analyzeProjects(projectRoots) {
           host: occ.host,
           detectedVia: occ.detectedVia,
           snippet: occ.snippet,
-        });
+        };
+        if (occ.foldedFrom) pushed.foldedFrom = occ.foldedFrom;
+        groups.get(groupKey).occurrences.push(pushed);
       }
     }
   }
