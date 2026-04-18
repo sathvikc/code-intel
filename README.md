@@ -33,7 +33,7 @@ code-intel impact path/to/project --since main --markdown
 code-intel impact path/to/project --since main --json
 ```
 
-The `impact` command is designed to answer *"what did this change put at risk?"* — not *"list every pattern in this repo."* It runs all four detectors below in one pass, annotates each finding with `touchesChange` when a change set is given, sorts change-touching findings first, and includes the transitive import-graph blast radius of the changed files.
+The `impact` command is designed to answer *"what did this change put at risk?"* — not *"list every pattern in this repo."* It runs every detector in one pass, annotates each finding with `touchesChange` when a change set is given, sorts change-touching findings first, and includes the transitive import-graph blast radius of the changed files. Every finding also carries a severity (blast-radius heuristic), a confidence level (`high` / `medium` / `low`) with a one-paragraph justification, and a stable fingerprint for dedup and tracking across runs.
 
 Per-analyzer commands remain available when you want one signal in isolation.
 
@@ -41,7 +41,7 @@ Per-analyzer commands remain available when you want one signal in isolation.
 
 ## What it finds today
 
-Four detectors ship as of this README. Each corresponds to a pattern in [`PATTERNS.md`](./PATTERNS.md) (the `P<N>` references below); each has tests under `tests/` and a reproduction in `examples/`.
+Six detectors ship today. Each corresponds to a pattern in [`PATTERNS.md`](./PATTERNS.md) (the `P<N>` references below); each has tests under `tests/` and a reproduction in `examples/`.
 
 ### `shared-state` — storage-key coupling (P1, partial P4)
 
@@ -75,28 +75,49 @@ Finds module-scope `const / let / var` bindings whose initializer reads a dynami
 code-intel stale-captures path/to/project --pretty
 ```
 
+### `paired-keys` — co-located `setItem` clusters that travel together (P10)
+
+Detects function bodies where ≥2 distinct literal storage keys are written within a few statements of each other — a paired-write cluster whose invariant ("these keys must be written together or readers see a stale cache") lives only inside the function, not in any type or storage contract. Any other writer elsewhere that touches only one of the keys silently breaks that invariant. v1 emits the cluster; the v2 on the backlog will correlate across clusters to flag the offending partial writers directly.
+
+```bash
+code-intel paired-keys path/to/project [more-paths...] --pretty
+```
+
+### `shape-drift` — write-shape vs read-shape across a shared storage channel (P9)
+
+Finds `(storage, key)` channels where one file writes `JSON.stringify({ a, b })` and another file reads `.c` (or destructures `{ c, d }`) on the same key — a shape mismatch that TypeScript cannot see across the `JSON.stringify` / `JSON.parse` boundary. v1 covers `localStorage` / `sessionStorage` with literal object shapes on both sides; later slices broaden to cookies, CustomEvent `detail`, and URL params.
+
+```bash
+code-intel shape-drift path/to/project [more-paths...] --pretty
+```
+
+### Folded keys across all of the above
+
+Every detector that extracts a string key or channel also resolves same-file `const K = 'literal'` (and never-reassigned `let`) to the underlying literal before grouping. So `const APP_SESSION_KEY = 'app.session'; localStorage.setItem(APP_SESSION_KEY, v);` pairs correctly with an inline-literal `localStorage.getItem('app.session')` elsewhere in the codebase; the occurrence gains a `foldedFrom: 'APP_SESSION_KEY'` hint so the reviewer can see the path the analyzer took. Cross-file imports are a later slice.
+
 ## What's coming
 
-Four more detectors are already sketched in `PATTERNS.md`, with backlog entries in `BACKLOG.md`:
+Three more detectors are already sketched in `PATTERNS.md`, with backlog entries in `BACKLOG.md`:
 
 | Detector | Pattern | What it catches |
 |---|---|---|
 | `duplicate-static-svg-id` | P6 | Hardcoded IDs inside inline SVG `<defs>` in components that render many times — gradient/filter/mask corruption from DOM-global ID resolution. |
 | `module-scope-handler` | P7 | Module-scope function references passed by name to `addEventListener` — the shape that production-only instrumentation wrappers can cache and silently stop firing. |
 | `proxied-platform-global` | P8 | Wholesale replacement of a built-in browser global (`window.history = new Proxy(...)`, `window.fetch = new Proxy(...)`) — a code smell because third-party writes can vanish through the proxy. |
-| `shape-drift` | P9 | Write-shape vs read-shape across any shared channel (storage / cookies / events / URL) — the "writer stored `{name}`, refactored to `{firstName, lastName}`, readers got `undefined`" class. Completes P4 on the storage case. |
 
-Infrastructure and orchestration items tracked in `BACKLOG.md` include: MCP server, configuration file, inline suppression syntax, change-coupling from git history, Nx-affected overlay, content-hash cache for sub-second warm scans, risk score per finding, and shell-outs to Knip / Biome / dependency-cruiser. See that file for the full list and priorities.
+Existing detectors also have v2 slices planned: `shape-drift` to broaden beyond storage (cookies, `CustomEvent.detail`, URL params); `paired-keys` to correlate across clusters; constant folding to cross file boundaries.
+
+Infrastructure and orchestration items tracked in `BACKLOG.md` include: MCP server, configuration file, inline suppression syntax, change-coupling from git history, Nx-affected overlay, content-hash cache for sub-second warm scans, risk score per finding, and shell-outs to Knip / Biome / dependency-cruiser.
 
 The catalogue grows whenever a new production bug is shared. It's built to grow; that's the point.
 
 ## Output
 
-The `impact` command emits a unified report with top-level fields `meta`, `summary`, `findings`, `graph`, and `integrations`. Each finding carries `id`, `kind`, `severity` (heuristic, not measured), `message`, `detail` (analyzer-specific payload), `relatedFiles`, and `touchesChange` (when a change set was given via `--since`). The `graph.blastRadius[]` section lists every file that transitively imports a changed file, with `{ file, project, depth }`.
+The `impact` command emits a unified report with top-level fields `meta`, `summary`, `findings`, `graph`, and `integrations`. Each finding carries `id`, `fingerprint` (stable 16-hex hash of the finding's identity), `kind`, `severity` (blast-radius heuristic — how bad this would be IF it's a bug), `confidence` (`high` / `medium` / `low` — how sure we are it IS a bug), `confidenceReason` (one-paragraph justification a reviewer can read in five seconds), `message`, `detail` (analyzer-specific payload), `relatedFiles`, and `touchesChange` (when a change set was given via `--since`). The `graph.blastRadius[]` section lists every file that transitively imports a changed file, with `{ file, project, depth }`.
 
-Per-analyzer commands (`shared-state`, `shared-events`, `shared-globals`, `stale-captures`) emit their native shape: a `findings[]` array where each finding has `kind`, a key/channel/name field, and `occurrences[]` with project, file, line, column, op, snippet, and `detectedVia` (the exact syntactic pattern matched — `bracket-access`, `indexed-access`, `classic-script-function`, `direct-api`, `indirect-wrapper`, etc.).
+Per-analyzer commands (`shared-state`, `shared-events`, `shared-globals`, `stale-captures`, `paired-keys`, `shape-drift`) emit their native shape: a `findings[]` array where each finding has `kind`, a key / channel / name field, and `occurrences[]` with project, file, line, column, op, snippet, `detectedVia` (the exact syntactic pattern matched), and optionally `foldedFrom` (the identifier name a key or channel was resolved through, when same-file constant folding fired).
 
-The schema is pre-1.0. Designed for AI-agent consumption first, humans second, and will stabilize as the catalogue grows — see `BACKLOG.md` → `SCHEMA.md`.
+The schema is pre-1.0. Designed for AI-agent consumption first, humans second, and will stabilize as the catalogue grows.
 
 ## Running it
 
@@ -129,6 +150,8 @@ node src/cli.js shared-state    examples/app-a examples/app-b --pretty
 node src/cli.js shared-events   examples/app-a examples/app-b --pretty
 node src/cli.js shared-globals  examples/app-a examples/app-b --pretty
 node src/cli.js stale-captures  examples/app-a --pretty
+node src/cli.js paired-keys     examples/app-a --pretty
+node src/cli.js shape-drift     examples/app-a --pretty
 ```
 
 Each of those fixtures reproduces a real production bug. See [`examples/README.md`](./examples/README.md) for the story behind each one.
@@ -142,9 +165,9 @@ Each of those fixtures reproduces a real production bug. See [`examples/README.m
 
 ## Status
 
-Early. Pre-1.0. Four detectors plus the `impact` orchestrator (with import-graph blast radius and `--since <ref>` diff-awareness) tested and dogfooded against fixtures that reproduce real incidents. Nine patterns logged, four more detectors to build. The JSON schema is a working contract, not a stable one. There's no configuration file, no suppression syntax, no MCP server yet — those are backlog items, not promises.
+Early. Pre-1.0. The `impact` orchestrator — import-graph blast radius, `--since <ref>` diff-awareness, confidence and fingerprint per finding — runs every detector in one pass and is dogfooded against fixtures that reproduce real incidents. The JSON schema is a working contract, not a stable one. There's no configuration file, no suppression syntax, no MCP server yet — those are backlog items, not promises.
 
-This README is a **snapshot** of the project as of version `0.8.x`. It will be rewritten as the catalogue grows and the scope becomes clearer — consider it supersedable in the same sense that [`DESIGN_DECISIONS.md`](./DESIGN_DECISIONS.md) entries can be superseded by later ones. Git history is the timeline; this file is always *now*.
+This README is a **snapshot**. It will be rewritten as the catalogue grows and the scope becomes clearer — consider it supersedable in the same sense that [`DESIGN_DECISIONS.md`](./DESIGN_DECISIONS.md) entries can be superseded by later ones. Git history is the timeline; this file is always *now*.
 
 ## Read more
 
