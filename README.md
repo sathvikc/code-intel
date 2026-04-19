@@ -44,6 +44,26 @@ The `impact` command is designed to answer *"what did this change put at risk?"*
 
 Per-analyzer commands remain available when you want one signal in isolation.
 
+## Per-symbol trace
+
+`impact` answers *"what did this change put at risk?"* across the whole repo. `trace` answers the narrower agent-friendly question *"what else touches this specific symbol before I rename / refactor / delete it?"*
+
+```bash
+# Every reader / writer / remover of a localStorage key, as a graph.
+code-intel trace --storage localStorage:app.session path/to/project
+
+# Every dispatcher / listener of a CustomEvent channel.
+code-intel trace --event profile:changed path/to/project
+
+# Every declarer / assigner of a classic-script global.
+code-intel trace --global parseCookie path/to/project [more-paths...]
+
+# Mermaid output for pasting into a doc or PR description.
+code-intel trace --storage localStorage:app.session path/to/project --format mermaid
+```
+
+Output is a star-topology graph: one target hub node, one occurrence node per site, one edge per occurrence labelled with the relation (`reads-from` / `writes-to` / `dispatches-to` / `listens-to` / `declares` / etc.). `trace` is a pure reshape over the existing `shared-state` / `shared-events` / `shared-globals` detectors — every occurrence node maps 1:1 to a site those analyzers already surface. See D12 for the schema and edge-kind map.
+
 ---
 
 ## What it finds today

@@ -585,3 +585,137 @@ affordance after the positional paths themselves. Shipping the
 simplest useful shape now and letting Q3's config format absorb the
 richer cases later matches the recall-first, ship-partial-iterate
 rhythm that D2 and D3 encode.
+
+---
+
+## D12 — `trace` subcommand: per-symbol graph via reshape (Q12 tier 1)
+
+**Status:** active
+**Resolves:** Q12 tier 1 (tiers 1.5, 2, 3 remain open)
+**Related:** Q7 (MCP surface), Q2 (storage wrappers), D11 (`--exclude`)
+
+**Decision:** `code-intel trace` is a peer subcommand of `impact`,
+not a flag on it. It takes exactly one target from:
+
+- `--storage <backend:key>` — backend is `localStorage` or
+  `sessionStorage`; the key is everything after the **first** colon
+  (so `user:profile:v2` survives verbatim as a key).
+- `--event <channel>` — matched as-is against `CustomEvent` /
+  `addEventListener` channel names (no colon-splitting).
+- `--global <name>` — matched against classic-script global-binding
+  names surfaced by `shared-globals`.
+
+Exactly one of the three is required. The target flag, `--pretty`,
+`--format json|mermaid`, `--exclude <path>` (per D11), and positional
+project paths are the full CLI surface.
+
+**Output shape (schema v0.1):**
+
+```
+{
+  version: "0.1",
+  analyzer: "trace",
+  target: { kind: "storage" | "event" | "global", ... },
+  projects: [{ id, root }],
+  nodes: [
+    { id: "target", role: "target", kind, ... },
+    { id: "n1",     role: "occurrence", project, file, line, column,
+                    op, snippet, detectedVia?, host? },
+    ...
+  ],
+  edges: [{ from: "n1", to: "target", kind: "writes-to" | ... }],
+  summary: { totalOccurrences, byOp, affectedFiles, affectedProjects }
+}
+```
+
+The graph is a **star topology**: one target hub, N occurrence leaves,
+one edge each. Edge kind is a uniform role-verb string derived
+mechanically from the detector's `op`:
+
+- storage: `read` → `reads-from`, `write` → `writes-to`, `remove` →
+  `removes-from`
+- events: `dispatch` → `dispatches-to`, `listen` → `listens-to`,
+  `unlisten` → `unlistens-from`
+- globals: `declare` → `declares`, `assign` → `assigns-to`,
+  `remove` → `removes`
+
+**Pure reshape — no new detection:**
+
+Every occurrence node corresponds 1:1 to an occurrence already
+emitted by `shared-state` / `shared-events` / `shared-globals`.
+`trace.traceStorage` / `traceEvent` / `traceGlobal` each call the
+matching analyzer's `analyzeProjects`, filter its findings to the
+target, and fan the occurrence arrays into nodes + edges. This is
+pinned by the integration test `integration: trace occurrences match
+the same sites impact sees for the key` which asserts
+`(file, line, op)` tuple-equality between `trace` and `impact` output
+for the same target — a silent divergence between the two surfaces
+fails the test.
+
+**Renderers:**
+
+- JSON (default) is the machine-readable shape; `--pretty` for
+  human inspection.
+- `--format mermaid` emits a `flowchart TD` with the target as the
+  centred hub and one labelled edge per occurrence. Double-quotes
+  are swapped for single quotes, angle brackets HTML-escaped, so
+  labels containing snippets survive Mermaid's parser. This is an
+  *additive* renderer over the same graph shape, not a separate
+  pipeline; adding DOT later costs ~20 lines.
+
+**What tier 1 does NOT ship (scope-pinned for later):**
+
+- `trace --paired-cluster "k1,k2"` — tier 1.5. Small follow-on;
+  `paired-keys` already emits per-function cluster findings, so the
+  work is another reshape plus a new `siblings-in-cluster` edge
+  kind. Gated on a user actually asking for it (YAGNI rhythm).
+- `trace --symbol <name>` — tier 2. Requires a TS `TypeChecker`
+  pass, which is a different cost class than reshape.
+- Runtime happens-before ordering — tier 3, fundamentally out of
+  scope (see Q12's reasoning).
+
+**Alternatives considered:**
+
+- **`impact --trace <target>` flag on the existing subcommand.**
+  Rejected: `impact` is already dense with flags (`--since`,
+  `--markdown`, `--json`, `--pretty`, `--exclude`); stacking a
+  target selector on top would break the one-flag-one-concern
+  grain. A peer subcommand also matches how the planned MCP tool
+  (Q7) will expose this — `whoReadsKey` / `whoWritesKey` are
+  separate RPCs, not an arg on a shared `impact` RPC — so a peer
+  CLI subcommand keeps the shape consistent across surfaces.
+- **Emit the graph as a flat `occurrences: []` array with an `op`
+  field per entry and no explicit edges.** Rejected on consumer
+  ergonomics: the star-with-edges shape is trivially convertible to
+  a flat list (`nodes.filter(n => n.role === 'occurrence')`), but
+  the reverse conversion from a flat list into a proper graph
+  requires an agent or UI layer to re-derive edge semantics. Paying
+  the edge-list cost once at emission saves every consumer from
+  paying it themselves, and keeps the Mermaid renderer trivial.
+- **Accept `--target <kind>:<value>` as a single unified flag.**
+  Rejected: `--storage localStorage:app.session` reads naturally
+  and auto-completes well in shell. A unified `--target
+  storage:localStorage:app.session` gets visually noisy fast and
+  loses the per-kind error messages (e.g. *"backend must be
+  localStorage or sessionStorage"*).
+- **Auto-render Mermaid when stdout is a TTY.** Rejected: the JSON
+  default is the contract shape for automation and MCP. TTY auto-
+  switching burns that contract for humans who pipe the output
+  into `jq`. `--format mermaid` is one flag to type and composes
+  cleanly with `--pretty` being JSON-only.
+
+**Reasoning:** The detectors already compute everything needed to
+answer *"what touches X?"* — the information was just buried inside
+a full `impact` report that consumers had to parse and filter
+themselves. The shortest path from that data to an agent-usable
+shape is the reshape in tier 1: no new AST walks, no new heuristics,
+no new schema surface beyond the graph envelope. Ship the 90%-case
+CLI now so the next-tier work (paired clusters, symbol-level,
+MCP tools) has a stable shape to extend; defer cost-increasing tiers
+until a concrete caller asks for them.
+
+Schema v0.1 on `trace` is deliberately minimal — no severity, no
+confidence, no fingerprint. Those live on findings (where there is
+a claim being made about a bug); `trace` makes no such claim, it
+just projects observations. A future schema bump would add them
+only if a caller needs them.

@@ -25,6 +25,7 @@ import * as pairedKeys from './paired-keys.js';
 import * as shapeDrift from './shape-drift.js';
 import * as duplicateStaticSvgId from './duplicate-static-svg-id.js';
 import * as impact from './impact.js';
+import * as trace from './trace.js';
 import { renderMarkdown } from './report-markdown.js';
 
 const ANALYZER_COMMANDS = {
@@ -119,6 +120,8 @@ const ANALYZER_COMMANDS = {
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--markdown|--json] [--pretty] [--exclude <path>]
+  code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
+                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>]
   code-intel shared-state    [paths...] [--pretty] [--exclude <path>]
   code-intel shared-events   [paths...] [--pretty] [--exclude <path>]
   code-intel shared-globals  [paths...] [--pretty] [--exclude <path>]
@@ -131,6 +134,13 @@ Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
                   and sorts by what intersects the git change set, and computes the
                   import-graph blast radius of the changed files.
+  trace           Per-symbol graph query. Given a target (storage key, event channel,
+                  or global name), returns a star-topology graph of every site that
+                  touches it: one hub node + N occurrence nodes, one edge per
+                  occurrence labelled with its relation (reads-from / writes-to /
+                  dispatches-to / etc.). Pure reshape over existing analyzer output;
+                  answers the agent-query shape "what else touches X before I
+                  refactor it?".
   shared-state    Detect localStorage / sessionStorage key coupling.
   shared-events   Detect window / globalThis CustomEvent coupling.
   shared-globals  Detect cross-script global-binding collisions (e.g. two files
@@ -166,6 +176,13 @@ Options:
   --markdown      (impact only) Emit markdown report (default when --since is set
                   or when stdout is a TTY).
   --json          (impact only) Emit unified JSON report.
+  --storage <backend:key>
+                  (trace only) target a storage key. backend is localStorage or
+                  sessionStorage; everything after the first colon is the key.
+  --event <channel>
+                  (trace only) target a CustomEvent / addEventListener channel.
+  --global <name> (trace only) target a classic-script global-binding name.
+  --format <fmt>  (trace only) json (default) or mermaid.
   --pretty        Pretty-print JSON output.
   --exclude <path>
                   Project-root-relative directory path to skip. Repeatable.
@@ -266,6 +283,99 @@ async function runImpact(argv) {
   return 0;
 }
 
+function parseTraceArgs(argv) {
+  const args = {
+    paths: [],
+    target: null, // { kind: 'storage' | 'event' | 'global', ... }
+    format: 'json',
+    pretty: false,
+    help: false,
+    exclude: [],
+  };
+  const setTarget = (t) => {
+    if (args.target) {
+      throw new Error(`Only one of --storage / --event / --global may be given`);
+    }
+    args.target = t;
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '-h' || a === '--help') args.help = true;
+    else if (a === '--pretty') args.pretty = true;
+    else if (a === '--format') {
+      const v = argv[++i];
+      if (v !== 'json' && v !== 'mermaid') {
+        throw new Error(`--format expects 'json' or 'mermaid', got: ${v ?? '(missing)'}`);
+      }
+      args.format = v;
+    }
+    else if (a === '--storage') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--storage requires a value of the form <backend:key>`);
+      const { backend, key } = trace.parseStorageTarget(v);
+      setTarget({ kind: 'storage', backend, name: key });
+    }
+    else if (a === '--event') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--event requires a channel name`);
+      setTarget({ kind: 'event', name: v });
+    }
+    else if (a === '--global') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--global requires a name`);
+      setTarget({ kind: 'global', name: v });
+    }
+    else if (a === '--exclude') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--exclude requires a value`);
+      args.exclude.push(v);
+    }
+    else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
+    else args.paths.push(a);
+  }
+  if (!args.help && !args.target) {
+    throw new Error(
+      `trace requires one of --storage <backend:key>, --event <channel>, --global <name>`,
+    );
+  }
+  if (args.paths.length === 0) args.paths.push('.');
+  return args;
+}
+
+async function runTrace(argv) {
+  let args;
+  try {
+    args = parseTraceArgs(argv);
+  } catch (e) {
+    process.stderr.write(`${e.message}\n\n${USAGE}`);
+    return 2;
+  }
+  if (args.help) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
+  let result;
+  if (args.target.kind === 'storage') {
+    result = trace.traceStorage(args.paths, args.target.backend, args.target.name, {
+      exclude: args.exclude,
+    });
+  } else if (args.target.kind === 'event') {
+    result = trace.traceEvent(args.paths, args.target.name, { exclude: args.exclude });
+  } else {
+    result = trace.traceGlobal(args.paths, args.target.name, { exclude: args.exclude });
+  }
+
+  if (args.format === 'mermaid') {
+    process.stdout.write(trace.renderMermaid(result));
+  } else {
+    const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
+    process.stdout.write(json + '\n');
+  }
+  process.stderr.write(trace.summarize(result).join('\n') + '\n');
+  return 0;
+}
+
 async function runAnalyzer(sub, argv) {
   const cmd = ANALYZER_COMMANDS[sub];
   let args;
@@ -294,6 +404,7 @@ async function main(argv) {
     return 0;
   }
   if (sub === 'impact') return runImpact(rest);
+  if (sub === 'trace') return runTrace(rest);
   if (ANALYZER_COMMANDS[sub]) return runAnalyzer(sub, rest);
   process.stderr.write(`Unknown command: ${sub}\n\n${USAGE}`);
   return 2;
