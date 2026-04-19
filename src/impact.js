@@ -68,6 +68,7 @@ import * as globals from './shared-state-globals.js';
 import * as staleCapture from './stale-module-capture.js';
 import * as pairedKeys from './paired-keys.js';
 import * as shapeDrift from './shape-drift.js';
+import * as duplicateStaticSvgId from './duplicate-static-svg-id.js';
 import * as importGraph from './import-graph.js';
 import { resolveProject } from './project.js';
 
@@ -102,6 +103,10 @@ function severityFor(kind, detail) {
       if ((detail.readOnlyKeys?.length ?? 0) > 0) return 'critical';
       return 'warning';
     }
+    case 'duplicate-static-svg-id':
+      // User-visible rendering corruption (gradients, filters, masks), not
+      // data loss. Warning tier is right: the bug is bad but bounded.
+      return 'warning';
     default:
       return 'info';
   }
@@ -144,6 +149,8 @@ function confidenceFor(kind, detail) {
       return confidencePairedKeys(detail);
     case 'shape-drift':
       return confidenceShapeDrift(detail);
+    case 'duplicate-static-svg-id':
+      return confidenceDuplicateSvgId(detail);
     default:
       return { confidence: 'medium', reason: 'No specific confidence rule for this finding kind.' };
   }
@@ -296,6 +303,31 @@ function confidencePairedKeys(detail) {
   };
 }
 
+function confidenceDuplicateSvgId(detail) {
+  // The factual claim is always true for emitted findings: a static id
+  // attribute exists on an SVG element, AND a url(#<id>) or #<id>
+  // reference for the same id exists in the same file. Confidence
+  // modulates on whether the component is exported (likely to be
+  // rendered by multiple callers, so multi-instance collisions are
+  // plausible) vs local (only reachable from the single file it lives
+  // in, so the bug requires the file itself to render the component
+  // twice). v1 cannot inspect call sites across projects, so "exported"
+  // is our best proxy for reach.
+  const refCount = detail.occurrences.filter((o) => o.op === 'reference').length;
+  const declCount = detail.occurrences.filter((o) => o.op === 'declare').length;
+  return {
+    confidence: 'high',
+    reason:
+      `SVG element has a static id='${detail.id}' that is referenced within the same file by `
+      + `${refCount} url(#${detail.id}) / href="#${detail.id}" site(s) across ${declCount} declaration(s). `
+      + 'If this component ever renders more than once on a page — a list, a grid, an SSR/SSG pre-render — '
+      + 'every instance emits the same id into the DOM, and the browser resolves every url(#…) reference '
+      + 'to whichever copy it saw first. The other copies render with the wrong (or missing) gradient / '
+      + 'filter / mask / symbol. The fix is to derive the id per instance (React.useId, nanoid, or a prop) '
+      + 'and thread it through both the declaration and every reference.',
+  };
+}
+
 function confidenceShapeDrift(detail) {
   // shape-drift only emits when BOTH sides have at least one literal
   // shape observation AND the aggregated shapes disagree — so the
@@ -363,6 +395,12 @@ function messageFor(kind, detail) {
     case 'paired-keys':
       return `${detail.storage} paired-write cluster: [${detail.keys.map((k) => `'${k}'`).join(', ')}]`
         + ` — all callers should update together`;
+    case 'duplicate-static-svg-id': {
+      const files = new Set(detail.occurrences.map((o) => `${o.project}:${o.file}`));
+      const file = files.size === 1 ? [...files][0].split(':').slice(1).join(':') : `${files.size} files`;
+      return `Static SVG id '${detail.id}' on <${detail.element}> referenced by url(#${detail.id}) in ${file}`
+        + ` — will collide on any page rendering this component more than once`;
+    }
     case 'shape-drift': {
       const wo = detail.writeOnlyKeys ?? [];
       const ro = detail.readOnlyKeys ?? [];
@@ -416,6 +454,12 @@ function findingIdFor(kind, detail) {
     const keySig = `${detail.storage}:${[...detail.keys].sort().join('+')}`;
     const loc = detail.occurrences[0];
     return `${kind}:${keySig}@${loc?.project ?? '?'}:${loc?.file ?? '?'}:${loc?.line ?? 0}`;
+  }
+  if (kind === 'duplicate-static-svg-id') {
+    // File-scoped by construction: two files hardcoding the same id are
+    // independent bugs. Include project + file in the id.
+    const loc = detail.occurrences.find((o) => o.op === 'declare') ?? detail.occurrences[0];
+    return `${kind}:${detail.id}@${loc?.project ?? '?'}:${loc?.file ?? '?'}`;
   }
   const key = detail.key ?? detail.channel ?? detail.name ?? 'anon';
   return `${kind}:${key}`;
@@ -503,6 +547,14 @@ function fingerprintFor(kind, detail) {
       // keep disagreeing does not change which channel the drift is on.
       parts.push(detail.storage ?? '?', detail.key ?? '');
       break;
+    case 'duplicate-static-svg-id': {
+      // Per-file, per-id identity. Moving the component to a new file
+      // changes the fingerprint (it is effectively a different bug site);
+      // adding or removing url(#) references in the same file does not.
+      const loc = detail.occurrences.find((o) => o.op === 'declare') ?? detail.occurrences[0] ?? {};
+      parts.push(detail.id ?? '', loc.project ?? '?', loc.file ?? '?');
+      break;
+    }
     default:
       // Unknown kind: hash whatever identity the detail carries, so at
       // least the fingerprint is deterministic per-run.
@@ -573,6 +625,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const stlResult = staleCapture.analyzeProjects(projectRoots);
   const prsResult = pairedKeys.analyzeProjects(projectRoots);
   const sdrResult = shapeDrift.analyzeProjects(projectRoots);
+  const svgResult = duplicateStaticSvgId.analyzeProjects(projectRoots);
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
   const projects = projectRoots.map(resolveProject);
@@ -586,6 +639,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   for (const f of stlResult.findings) wrapped.push(wrap('stale-module-capture', f, rootById, changedFilesAbs));
   for (const f of prsResult.findings) wrapped.push(wrap('paired-keys', f, rootById, changedFilesAbs));
   for (const f of sdrResult.findings) wrapped.push(wrap('shape-drift', f, rootById, changedFilesAbs));
+  for (const f of svgResult.findings) wrapped.push(wrap('duplicate-static-svg-id', f, rootById, changedFilesAbs));
 
   // 4. Sort: change-touching first, then severity, then stable by id.
   const SEV_ORDER = { critical: 0, warning: 1, info: 2 };

@@ -10,6 +10,8 @@
 //   code-intel shared-globals  [paths...] [--pretty]
 //   code-intel stale-captures  [paths...] [--pretty]
 //   code-intel paired-keys     [paths...] [--pretty]
+//   code-intel shape-drift     [paths...] [--pretty]
+//   code-intel duplicate-static-svg-id [paths...] [--pretty]
 //
 // Multi-project is first-class: every path is a separate project; findings
 // are grouped across them so cross-repo coupling surfaces the same way
@@ -21,6 +23,7 @@ import * as globals from './shared-state-globals.js';
 import * as staleCapture from './stale-module-capture.js';
 import * as pairedKeys from './paired-keys.js';
 import * as shapeDrift from './shape-drift.js';
+import * as duplicateStaticSvgId from './duplicate-static-svg-id.js';
 import * as impact from './impact.js';
 import { renderMarkdown } from './report-markdown.js';
 
@@ -101,6 +104,17 @@ const ANALYZER_COMMANDS = {
       `  both sides drift: ${s.withBothDrift}`,
     ],
   },
+  'duplicate-static-svg-id': {
+    analyzer: duplicateStaticSvgId,
+    summarize: (s) => [
+      `code-intel / duplicate-static-svg-id`,
+      `projects:          ${s.projectCount}`,
+      `findings:          ${s.findingCount}`,
+      `  declarations:    ${s.totalDeclarations}`,
+      `  references:      ${s.totalReferences}`,
+      `  affected files:  ${s.affectedFiles}`,
+    ],
+  },
 };
 
 const USAGE = `Usage:
@@ -111,6 +125,7 @@ const USAGE = `Usage:
   code-intel stale-captures  [paths...] [--pretty]
   code-intel paired-keys     [paths...] [--pretty]
   code-intel shape-drift     [paths...] [--pretty]
+  code-intel duplicate-static-svg-id [paths...] [--pretty]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -131,6 +146,13 @@ Subcommands:
                   the JSON.stringify / JSON.parse boundary. v1 is storage-only and
                   catches literal object-literal writes against literal property
                   accesses; wider channels and wrapper modules come later.
+  duplicate-static-svg-id
+                  Detect static string-literal id attributes on JSX SVG elements
+                  that are referenced in the same file via url(#id) or
+                  xlinkHref="#id". If the component ever renders more than once
+                  on a page (SSR pre-render, lists, grids) the browser resolves
+                  every url(#id) to whichever copy it saw first, silently
+                  corrupting gradients/filters/masks/use-symbols.
 
 Args:
   paths           One or more project roots. Defaults to "." if omitted.
