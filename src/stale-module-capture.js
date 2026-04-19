@@ -235,8 +235,8 @@ function scriptKindFor(filePath) {
  * for testing. Note: captures found here only know about readers from
  * THIS file; the full reader set is computed cross-file in analyzeProjects.
  */
-export function analyzeSource(code, filePath) {
-  const sf = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
+export function analyzeSource(code, filePath, preparsed) {
+  const sf = preparsed ?? ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
   const readers = extractReaders(sf);
   const captures = findCaptures(sf, readers);
   return { readers: [...readers], captures };
@@ -249,6 +249,7 @@ export function analyzeSource(code, filePath) {
 export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
 
   const readerNames = new Set();
   const parsed = [];
@@ -256,12 +257,18 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // Pass 1: parse every file, collect reader names.
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
-      let code;
-      try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
       let sf;
-      try {
-        sf = ts.createSourceFile(absFile, code, ts.ScriptTarget.Latest, true, scriptKindFor(absFile));
-      } catch { continue; }
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        sf = cached.sourceFile;
+      } else {
+        let code;
+        try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+        try {
+          sf = ts.createSourceFile(absFile, code, ts.ScriptTarget.Latest, true, scriptKindFor(absFile));
+        } catch { continue; }
+      }
       parsed.push({ project, absFile, sf });
       for (const name of extractReaders(sf)) readerNames.add(name);
     }

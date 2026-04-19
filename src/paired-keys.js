@@ -187,8 +187,8 @@ function clusterize(perStatementHits) {
  * is returned in the shape emitted by analyzeProjects (minus project /
  * file fields, which are attached by the caller).
  */
-export function analyzeSource(code, filePath) {
-  const sf = ts.createSourceFile(
+export function analyzeSource(code, filePath, preparsed) {
+  const sf = preparsed ?? ts.createSourceFile(
     filePath,
     code,
     ts.ScriptTarget.Latest,
@@ -265,19 +265,28 @@ function scriptKindFor(filePath) {
 export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
   const findings = [];
 
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
-      try {
-        code = fs.readFileSync(absFile, 'utf8');
-      } catch {
-        continue;
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        code = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try {
+          code = fs.readFileSync(absFile, 'utf8');
+        } catch {
+          continue;
+        }
       }
       let clusters;
       try {
-        clusters = analyzeSource(code, absFile);
+        clusters = analyzeSource(code, absFile, preparsed);
       } catch {
         continue; // graceful parse-failure skip
       }

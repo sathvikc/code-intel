@@ -137,8 +137,8 @@ function userGlobalName(accessExpr) {
 /**
  * Parse a single file and return its occurrences. Pure — no filesystem.
  */
-export function analyzeSource(code, filePath) {
-  const sf = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
+export function analyzeSource(code, filePath, preparsed) {
+  const sf = preparsed ?? ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
   const isModule = fileIsModuleLike(sf);
   const occurrences = [];
 
@@ -241,19 +241,28 @@ function scriptKindFor(filePath) {
 export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
   const groups = new Map();
 
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
-      try {
-        code = fs.readFileSync(absFile, 'utf8');
-      } catch {
-        continue;
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        code = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try {
+          code = fs.readFileSync(absFile, 'utf8');
+        } catch {
+          continue;
+        }
       }
       let result;
       try {
-        result = analyzeSource(code, absFile);
+        result = analyzeSource(code, absFile, preparsed);
       } catch {
         continue;
       }

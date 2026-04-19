@@ -135,8 +135,8 @@ function extractStringOrDynamic(node, sourceFile, foldMap) {
 /**
  * Parse a single file and return raw occurrences. Pure — no filesystem.
  */
-export function analyzeSource(code, filePath) {
-  const sourceFile = ts.createSourceFile(
+export function analyzeSource(code, filePath, preparsed) {
+  const sourceFile = preparsed ?? ts.createSourceFile(
     filePath,
     code,
     ts.ScriptTarget.Latest,
@@ -229,19 +229,28 @@ function scriptKindFor(filePath) {
 export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
   const groups = new Map();
 
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
-      try {
-        code = fs.readFileSync(absFile, 'utf8');
-      } catch {
-        continue;
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        code = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try {
+          code = fs.readFileSync(absFile, 'utf8');
+        } catch {
+          continue;
+        }
       }
       let occurrences;
       try {
-        occurrences = analyzeSource(code, absFile);
+        occurrences = analyzeSource(code, absFile, preparsed);
       } catch {
         continue;
       }

@@ -62,6 +62,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { createAstCache } from './ast-cache.js';
 import * as importGraph from './import-graph.js';
 import { resolveProject } from './project.js';
 import { selectDetectors } from './detectors/index.js';
@@ -633,11 +634,21 @@ export function gitChangedFiles(cwd, base) {
  * @param {string[]} [opts.exclude]       project-root-relative directory paths to skip
  * @param {string[]} [opts.only]          detector ids to run; if given, others are skipped
  * @param {string[]} [opts.skip]          detector ids to skip; applied after `only`
+ * @param {ReturnType<typeof createAstCache>} [opts.astCache]  injected cache,
+ *                                         used by tests that want to inspect
+ *                                         hit/miss stats. Normal callers omit
+ *                                         this and get a fresh per-run cache.
  */
 export function analyzeProjects(projectRoots, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const maxDepth = opts.maxDepth ?? 6;
   const exclude = opts.exclude;
+  // One cache for the whole run. Each source file is read + parsed on first
+  // touch and reused by every subsequent detector and by import-graph. The
+  // cache is deliberately per-run: no cross-run persistence, no content
+  // hashing. Detectors that don't receive a cache fall back to their own
+  // fs/TS calls (backward compatible with direct unit-test callers).
+  const astCache = opts.astCache ?? createAstCache();
   // Registry-driven detector selection. Unknown ids in `only`/`skip` throw
   // from selectDetectors — we let that propagate so a typo surfaces at the
   // CLI boundary rather than quietly producing an empty-but-valid report.
@@ -661,7 +672,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   //    up the right `findingKind` wrapper label without a second map.
   const detectorResults = detectors.map((d) => ({
     detector: d,
-    result: d.module.analyzeProjects(projectRoots, { exclude }),
+    result: d.module.analyzeProjects(projectRoots, { exclude, astCache }),
   }));
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
@@ -690,7 +701,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // 5. Blast radius, if we have a change set.
   let blastRadius = null;
   if (changedFilesAbs && changedFilesAbs.size > 0) {
-    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude });
+    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude, astCache });
     blastRadius = graphResult.dependents.map((d) => ({
       file: d.file,
       project: projectIdFor(d.file, rootById),

@@ -98,8 +98,8 @@ function scriptKindFor(filePath) {
  * Extract every import specifier from a source file's AST.
  * Returns the raw strings exactly as written — resolution happens separately.
  */
-export function extractImportSpecifiers(code, filePath) {
-  const sf = ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
+export function extractImportSpecifiers(code, filePath, preparsed) {
+  const sf = preparsed ?? ts.createSourceFile(filePath, code, ts.ScriptTarget.Latest, true, scriptKindFor(filePath));
   const specs = [];
 
   function visit(node) {
@@ -198,6 +198,7 @@ export function resolveImport(spec, fromFile, aliasMap) {
 export function buildReverseGraph(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
   const aliasesByProject = new Map(projects.map((p) => [p.id, loadAliases(p.root)]));
   const graph = new Map();
   const filesByProject = new Map(projects.map((p) => [p.id, new Set()]));
@@ -207,9 +208,17 @@ export function buildReverseGraph(projectRoots, opts = {}) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
       filesByProject.get(project.id).add(absFile);
       let src;
-      try { src = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        src = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try { src = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+      }
       let specs;
-      try { specs = extractImportSpecifiers(src, absFile); } catch { continue; }
+      try { specs = extractImportSpecifiers(src, absFile, preparsed); } catch { continue; }
       for (const spec of specs) {
         const target = resolveImport(spec, absFile, aliases);
         if (!target) continue;
@@ -252,8 +261,8 @@ export function findDependents(graph, changedFiles, maxDepth = 6) {
  * One-shot convenience: build graph and compute dependents for a change set.
  */
 export function analyzeProjects(projectRoots, changedFiles, opts = {}) {
-  const { maxDepth = 6, exclude } = opts;
-  const { graph, filesByProject, projects } = buildReverseGraph(projectRoots, { exclude });
+  const { maxDepth = 6, exclude, astCache } = opts;
+  const { graph, filesByProject, projects } = buildReverseGraph(projectRoots, { exclude, astCache });
   // Filter changedFiles to absolute paths that actually exist in one of the
   // indexed projects. This tolerates paths outside our scan scope gracefully.
   const knownFiles = new Set();

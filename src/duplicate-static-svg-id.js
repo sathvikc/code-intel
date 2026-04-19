@@ -120,8 +120,8 @@ const ITER_METHODS = new Set(['map', 'flatMap', 'forEach', 'reduce', 'reduceRigh
  *   componentExports: Map<string, { exportedAs: string }>,
  * }}
  */
-export function analyzeSource(code, filePath) {
-  const sf = ts.createSourceFile(
+export function analyzeSource(code, filePath, preparsed) {
+  const sf = preparsed ?? ts.createSourceFile(
     filePath,
     code,
     ts.ScriptTarget.Latest,
@@ -162,6 +162,7 @@ export function analyzeSource(code, filePath) {
 export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
   const rootById = new Map(projects.map((p) => [p.id, p.root]));
   const aliasesByProject = new Map(projects.map((p) => [p.id, loadAliases(p.root)]));
 
@@ -172,9 +173,17 @@ export function analyzeProjects(projectRoots, opts = {}) {
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
-      try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        code = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+      }
       let obs;
-      try { obs = analyzeSource(code, absFile); } catch { continue; }
+      try { obs = analyzeSource(code, absFile, preparsed); } catch { continue; }
       observationsByFile.set(absFile, {
         ...obs,
         project: project.id,
@@ -184,7 +193,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   }
 
   // Reverse import graph (who imports what).
-  const { graph: reverseGraph } = buildReverseGraph(projectRoots, { exclude });
+  const { graph: reverseGraph } = buildReverseGraph(projectRoots, { exclude, astCache });
 
   // Collect candidates. A candidate is a (file, component, id) combo that
   // has at least one static-id declaration AND the file has an anchor for

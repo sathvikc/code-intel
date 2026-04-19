@@ -41,7 +41,8 @@ Planned:
 - [x] Same-file string-literal constant folding across `shared-state`, `shared-events`, `paired-keys`, `shape-drift` — resolves Q8 / see D8
 - [ ] Cross-file constant folding (imported string-literal constants, re-export chains, barrel files) — the v2 of the folding helper
 - [ ] Wrapper-module detection (see Q2)
-- [ ] Content-hash cache for AST parses (target <1s warm scan, per CODE-INTEL.md)
+- [x] Per-run AST cache shared across detectors + `import-graph` (~45% wall-time reduction on self-scan) — see D14
+- [ ] Cross-run content-hash AST cache on disk (watch-mode / CI warm-start; orthogonal to D14)
 - [ ] Nx integration — `npx nx show projects --affected` overlay on blast radius
 - [ ] Risk score (0–100) per finding and per report
 

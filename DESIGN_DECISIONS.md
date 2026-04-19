@@ -842,3 +842,84 @@ would lock us into guesses about their shape. The registry is the
 smallest abstraction that serves concrete current pain without
 guessing at future pain — consistent with D2 (ship partial, iterate)
 and D3 (don't abstract ahead of real pressure).
+
+---
+
+## D14 — Per-run AST cache shared across detectors
+
+**Status:** active
+**Related:** D2 (ship partial), D13 (registry), BACKLOG (content-hash cache for warm-start)
+
+**Decision:** A single `impact` run creates one in-memory AST cache
+(`src/ast-cache.js`) and threads it through every detector and through
+`import-graph`. The cache reads each source file and calls
+`ts.createSourceFile` on first touch, then returns the same `{ code,
+sourceFile }` reference to every subsequent consumer. Each detector's
+`analyzeSource(code, filePath, preparsed?)` accepts an optional
+pre-built `SourceFile` and skips its own parse when given one.
+
+**Context:** Every detector independently read the same source files
+and rebuilt the same AST. On a small run this meant the same
+`ts.createSourceFile` call happened 7–8 times per file (one per
+detector plus `import-graph`). Measured on `code-intel`'s own `src/`
+(15 files, 7 detectors) that was 2.26s user / 1.63s wall. With a
+shared cache the same run drops to 1.33s user / 0.89s wall — a ~45%
+wall-time reduction with no behavioral change.
+
+**Scope of the v1 slice:**
+
+- **Per-run only.** The cache lives on the stack of one
+  `analyzeProjects` call. It is not persisted to disk, not keyed by
+  content hash, and has no cross-run invalidation concerns.
+- **Backward compatible.** `analyzeSource(code, filePath)` still works
+  without the third arg — unit tests call it that way everywhere.
+  Only `analyzeProjects` receives `opts.astCache`; when absent, each
+  detector falls back to its own `fs.readFileSync` +
+  `ts.createSourceFile` path.
+- **Behaviour-identical.** A regression test in
+  `tests/ast-cache.test.js` asserts that `impact` output is
+  structurally equal (minus `meta.timestamp`) with and without the
+  cache on a fixture project touched by multiple detectors.
+- **Observability.** `cache.stats()` reports `{ size, hits, misses,
+  readErrors, parseErrors }`. Not wired into CLI output yet; used by
+  tests and available for future `--verbose`.
+
+**Alternatives considered:**
+
+- **`Promise.all` over detectors.** Rejected. Detectors are CPU-bound
+  synchronous code; wrapping them in `async` and firing with
+  `Promise.all` produces no speedup because the event loop can't
+  parallelise synchronous work. This is the most common "add
+  parallelism" mistake and it does not apply here.
+- **`worker_threads` pool.** Deferred. Real multi-core scaling, but
+  costs worker lifecycle management, AST-across-boundary
+  serialisation, and more complex error paths. Worth it at ~1k+
+  files; premature at 15. Revisit when dogfooding on a real
+  multi-repo codebase surfaces actual slowness, and only after the
+  AST cache alone is measured to be insufficient.
+- **Content-hash cross-run cache on disk.** Different problem —
+  warm-start of repeated CLI invocations. Orthogonal to the in-run
+  duplication this decision fixes. Remains in `BACKLOG.md`.
+- **Refactor `analyzeSource` to only accept a `SourceFile` (no raw
+  string).** Rejected. The string is still needed for snippets /
+  `getText` bookkeeping inside some detectors, and forcing every
+  unit test to pre-parse would break the pure
+  "string-in / findings-out" contract that makes the detectors easy
+  to test in isolation.
+- **Bake the cache into the `walkSourceFiles` generator.** Rejected.
+  The walker's job is directory traversal; adding parsing to it
+  would conflate two responsibilities and force every caller (even
+  non-parsing ones like a future file-count utility) to pay the
+  `ts` dependency. Keeping the cache as a separate orchestrator-
+  scoped helper preserves the walker's narrow contract.
+
+**Reasoning:** The parse-duplication was the only CPU cost with a
+clean fix that needed zero new concurrency primitives. The cache is
+a plain `Map` behind a thin API — mechanically simpler than any
+parallelism approach, and it leaves the door open for
+`worker_threads` later (a worker pool that ships file paths + uses
+its own cache per worker is an orthogonal extension, not a rewrite).
+Shipping it now also sets the pattern for future cross-cutting
+orchestration state (alias tables, import-graph reuse in the same
+run) to thread through `opts` in the same style as `exclude`,
+`only`, `skip`, and now `astCache`.

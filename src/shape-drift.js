@@ -349,8 +349,8 @@ function scriptKindFor(filePath) {
  * where each entry has { storage, key, line, column, opaque, keys?,
  * reason?, snippet }.
  */
-export function analyzeSource(code, filePath) {
-  const sf = ts.createSourceFile(
+export function analyzeSource(code, filePath, preparsed) {
+  const sf = preparsed ?? ts.createSourceFile(
     filePath,
     code,
     ts.ScriptTarget.Latest,
@@ -430,20 +430,29 @@ export function analyzeSource(code, filePath) {
 export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const astCache = opts.astCache;
   /** @type {Map<string, { storage, key, writes: any[], reads: any[] }>} */
   const channels = new Map();
 
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
-      try {
-        code = fs.readFileSync(absFile, 'utf8');
-      } catch {
-        continue;
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        code = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try {
+          code = fs.readFileSync(absFile, 'utf8');
+        } catch {
+          continue;
+        }
       }
       let parsed;
       try {
-        parsed = analyzeSource(code, absFile);
+        parsed = analyzeSource(code, absFile, preparsed);
       } catch {
         continue;
       }
