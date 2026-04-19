@@ -18,11 +18,12 @@ Shipped (also listed for cross-reference with `PATTERNS.md`):
 - [x] `stale-captures` — stale module-scope capture of dynamic sources (P5)
 - [x] `paired-keys` — co-located `setItem` cluster in one function body (P10)
 - [x] `shape-drift` v1 — storage channel; literal-literal write/read shape disagreement on a shared key (addresses P9 for the storage case; catches the literal side of P4)
+- [x] `duplicate-static-svg-id` — static SVG ids with in-file `url(#id)` / `xlinkHref="#id"` anchors that collide on every repeated render (P6 / see D9)
 - [x] `impact` — unified orchestrator: runs all detectors, adds `--since <ref>` diff-awareness, blast-radius via import graph, markdown + JSON reporters
 - [x] import-graph — AST-based reverse import graph + BFS blast-radius traversal
 
 Planned:
-- [ ] `duplicate-static-svg-id` — hardcoded SVG IDs in multi-rendered components (see P6)
+- [ ] Built-output scanning mode — parse `dist/**/*.html` and flag manifest duplicate ids, duplicate meta tags, duplicated script srcs, etc. (complements `duplicate-static-svg-id` source mode; catches what's actually shipped after SSR/SSG)
 - [ ] `module-scope-handler` — module-scope fn passed by name to `addEventListener` inside a re-runnable setup (see P7)
 - [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
 - [ ] `BroadcastChannel` / `MessageChannel`

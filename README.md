@@ -41,7 +41,7 @@ Per-analyzer commands remain available when you want one signal in isolation.
 
 ## What it finds today
 
-Six detectors ship today. Each corresponds to a pattern in [`PATTERNS.md`](./PATTERNS.md) (the `P<N>` references below); each has tests under `tests/` and a reproduction in `examples/`.
+Seven detectors ship today. Each corresponds to a pattern in [`PATTERNS.md`](./PATTERNS.md) (the `P<N>` references below); each has tests under `tests/` and a reproduction in `examples/`.
 
 ### `shared-state` — storage-key coupling (P1, partial P4)
 
@@ -91,19 +91,28 @@ Finds `(storage, key)` channels where one file writes `JSON.stringify({ a, b })`
 code-intel shape-drift path/to/project [more-paths...] --pretty
 ```
 
+### `duplicate-static-svg-id` — hard-coded SVG ids that collide on every repeated render (P6)
+
+Finds JSX components that declare a static `id` on an SVG element (`<linearGradient id="icon-fx">`) AND reference that same id in the same file via `url(#icon-fx)` or `xlinkHref="#icon-fx"`. The instant the component is ever rendered more than once on a page — a list of rows, a pre-rendered navigation, an SSR page with 50 cards — every instance emits the same id into the DOM, and the browser resolves every `url(#…)` to whichever element it saw first. Other instances paint with the wrong (or missing) gradient, filter, mask, or `<use>` target. The fix is to derive the id per instance (`React.useId`, `nanoid`, or a prop) and thread it into both the declaration and every reference.
+
+```bash
+code-intel duplicate-static-svg-id path/to/project [more-paths...] --pretty
+```
+
 ### Folded keys across all of the above
 
 Every detector that extracts a string key or channel also resolves same-file `const K = 'literal'` (and never-reassigned `let`) to the underlying literal before grouping. So `const APP_SESSION_KEY = 'app.session'; localStorage.setItem(APP_SESSION_KEY, v);` pairs correctly with an inline-literal `localStorage.getItem('app.session')` elsewhere in the codebase; the occurrence gains a `foldedFrom: 'APP_SESSION_KEY'` hint so the reviewer can see the path the analyzer took. Cross-file imports are a later slice.
 
 ## What's coming
 
-Three more detectors are already sketched in `PATTERNS.md`, with backlog entries in `BACKLOG.md`:
+Two more detectors are already sketched in `PATTERNS.md`, with backlog entries in `BACKLOG.md`:
 
 | Detector | Pattern | What it catches |
 |---|---|---|
-| `duplicate-static-svg-id` | P6 | Hardcoded IDs inside inline SVG `<defs>` in components that render many times — gradient/filter/mask corruption from DOM-global ID resolution. |
 | `module-scope-handler` | P7 | Module-scope function references passed by name to `addEventListener` — the shape that production-only instrumentation wrappers can cache and silently stop firing. |
 | `proxied-platform-global` | P8 | Wholesale replacement of a built-in browser global (`window.history = new Proxy(...)`, `window.fetch = new Proxy(...)`) — a code smell because third-party writes can vanish through the proxy. |
+
+A parallel **built-output scanning mode** is also planned: parse the HTML emitted by your SSR / SSG build and flag manifest bugs in the shipped artifacts — duplicate ids within a document, duplicate `<meta>` tags, duplicated script srcs, hydration-mismatch shapes. Complements the source analyzers by catching the "this is wrong in what we ship right now" case (ground truth) alongside the "this is a latent pattern" case (what source analysis already covers).
 
 Existing detectors also have v2 slices planned: `shape-drift` to broaden beyond storage (cookies, `CustomEvent.detail`, URL params); `paired-keys` to correlate across clusters; constant folding to cross file boundaries.
 
@@ -146,12 +155,13 @@ Try it against the consolidated example apps in the repo:
 node src/cli.js impact          examples/app-a examples/app-b --markdown
 
 # Individual detectors — JSON, one signal at a time
-node src/cli.js shared-state    examples/app-a examples/app-b --pretty
-node src/cli.js shared-events   examples/app-a examples/app-b --pretty
-node src/cli.js shared-globals  examples/app-a examples/app-b --pretty
-node src/cli.js stale-captures  examples/app-a --pretty
-node src/cli.js paired-keys     examples/app-a --pretty
-node src/cli.js shape-drift     examples/app-a --pretty
+node src/cli.js shared-state             examples/app-a examples/app-b --pretty
+node src/cli.js shared-events            examples/app-a examples/app-b --pretty
+node src/cli.js shared-globals           examples/app-a examples/app-b --pretty
+node src/cli.js stale-captures           examples/app-a --pretty
+node src/cli.js paired-keys              examples/app-a --pretty
+node src/cli.js shape-drift              examples/app-a --pretty
+node src/cli.js duplicate-static-svg-id  examples/app-a --pretty
 ```
 
 Each of those fixtures reproduces a real production bug. See [`examples/README.md`](./examples/README.md) for the story behind each one.

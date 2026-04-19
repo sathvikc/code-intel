@@ -307,3 +307,103 @@ Scope kept narrow on purpose (D2 "ship partial, iterate"): we catch
 the easy 70% and log the 30% as the next slice. `foldedFrom` keeps
 the D4 spirit — consumers get structured metadata, not a fuzzy "maybe
 this came from a constant."
+
+---
+
+## D9 — `duplicate-static-svg-id`: flag the pattern, not the render count
+
+**Status:** active
+**Related:** D2, D5, D8
+**Decision:** The `duplicate-static-svg-id` detector emits a finding
+when a JSX file contains (a) a static string-literal `id` attribute on
+any JSX element AND (b) at least one reference to that same id in the
+same file via `url(#<id>)` inside any attribute value OR `#<id>` as
+the value of an `href` / `xlinkHref` / `xlink:href` attribute. It does
+NOT attempt to reason about whether the enclosing component renders
+once or many times on any given page.
+
+**What counts as "static" id:**
+
+- `id="foo"` (string-literal JSX attribute)
+- `id={"foo"}` (JSX expression wrapping a literal)
+- `id={FOO}` where `FOO` folds under the same-file rules in D8
+
+All other id expressions — `useId()`, `nanoid()`, prop references,
+template literals with substitutions, anything else — are treated as
+dynamic and skipped. The fold helper is the same one used by every
+other string-key detector; "static" has a single consistent meaning
+across the codebase.
+
+**Why we require the in-file anchor:**
+
+A `<div id="foo">` without a matching `url(#foo)` / `href="#foo"`
+reference is most likely a test selector, an a11y target, a scroll
+anchor, or a DOM-query hook — none of which are the bug we care
+about. Without the anchor, the false-positive rate dominates. With
+the anchor, the finding is tight: "this id is used as an in-graphic
+reference in this component." Cross-file anchors are deliberately
+out of v1; in real SVG code, the declaration and its `url(#)`
+consumers virtually always live in the same file.
+
+**Why we don't attempt to detect render multiplicity:**
+
+Whether a component actually renders more than once on a page is not
+statically decidable in general. The same component can render once
+on a detail page and fifty times on a list page. A static-id SVG
+component is a latent bug regardless — if *any* caller ever renders it
+twice, it breaks, silently, in production. The incident that motivated
+building this detector was exactly that shape: a sub-nav rendered
+once-on-click for years, then pre-rendered for SEO on every category
+at the same time; the existing code became wrong overnight. The bug
+pre-existed the pre-render change; source analysis catches the
+pattern before the pre-render change exposes it.
+
+So confidence stays at `high` on every emitted finding, with a reason
+paragraph that names the render scenarios that make the bug manifest
+(list, grid, SSR / SSG pre-render) and the fix (derive the id per
+instance — `React.useId`, `nanoid`, or a prop — and thread it through
+both the declaration and every reference). Reviewers who want
+stricter tiering can filter by confidence once cross-file reach
+analysis lands in a later slice.
+
+**Output schema (follows D3):**
+
+Finding kind `duplicate-static-svg-id`, file-scoped by construction.
+Each finding has `id` (the static string), `element` (the owning JSX
+tag name on the primary declaration — purely informational), and
+`occurrences[]` with `op: 'declare' | 'reference'`. Declaration
+occurrences carry `element`; reference occurrences carry
+`via: 'url' | 'href'` and `attribute: <jsx-attribute-name>`. Both
+carry `foldedFrom` when the fold helper was used to resolve the id.
+The `findingId` key includes the file path so that two files
+hardcoding the same id produce two independent findings — they are
+independent bugs, not a coupling.
+
+**Alternatives considered:**
+
+- **Emit every static `id` attribute, anchor or not.** Rejected for
+  noise: tests, a11y anchors, and DOM hooks would drown the signal.
+- **Try to detect render multiplicity statically** (scan the component
+  tree, count call sites, classify as "likely-many-renders" vs
+  "likely-one-render"). Rejected: the analysis is expensive, brittle,
+  and at most a proxy for the actual runtime render count. A latent
+  bug is worth surfacing regardless.
+- **Scan the generated HTML from an SSR/SSG build and flag literal
+  duplicate ids there.** This is a *complementary* direction, not an
+  alternative — it catches the bug as a fact rather than a pattern.
+  Built-output scanning is logged as its own future slice; it does
+  not replace source analysis, which catches the latent-pattern case
+  for SPAs and for code that will be pre-rendered next month.
+- **Treat JSX `id` attributes on non-SVG elements (`<div id="x">`)
+  specially.** Rejected: a `<div id="foo">` paired with a
+  `<rect fill="url(#foo)">` elsewhere in the same file is still the
+  same bug shape (and has been observed in the wild when a dev mixed
+  SVG defs with DOM-hosted ids). The anchor is what matters, not the
+  tag taxonomy.
+
+**Reasoning:** Matches the D2 "ship partial, iterate" spirit —
+narrow, deterministic, anchored on a tight syntactic shape that
+almost never misfires, built to dovetail with future build-output
+scanning rather than pre-empt it. The fold helper (D8) is reused
+rather than re-implemented, keeping the "what counts as static"
+rule unified across the detector catalogue.
