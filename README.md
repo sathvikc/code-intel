@@ -202,11 +202,27 @@ Each of those fixtures reproduces a real production bug. See [`examples/README.m
 
 ## How this fits alongside your existing tools
 
-code-intel is **not** a replacement for anything. Linters (ESLint, Biome, Oxlint) check code quality within a file. Type checkers (TypeScript) check types within import graphs, and erase that information at every serialization boundary. Query-based analyzers (CodeQL, Semgrep) ship engines whose curated query packs concentrate on security vulnerabilities and data-flow attacks. AI PR reviewers (Greptile, CodeRabbit) index the whole codebase and emit human-language review comments — and explicitly admit in their own marketing that they miss cross-file bugs and need a deterministic backstop. Structural tools (Knip, dependency-cruiser, Madge) find dead code and import-graph cycles. Runtime validators (Zod, Valibot) are a prevention layer that requires the codebase to adopt them at every boundary.
+code-intel is **not** a replacement for anything. Each category below owns its slot; `code-intel` fills a different one.
 
-None of these catalogue the specific, named production-bug patterns that bite JS / TS apps at the implicit contracts between files — string-literal storage keys, `CustomEvent` channels, classic-script globals, module-scope captures of dynamic sources, paired-key clusters, serialized shape drift across `JSON.parse`. That is the slot this tool is built for. Run it alongside what you already have; the findings don't overlap with any of the above.
+- **Linters** (ESLint, Biome, Oxlint) — check code quality within a file.
+- **Type checkers** (TypeScript) — check types within import graphs, and erase that information at every serialization boundary.
+- **Query-based analyzers** (CodeQL, Semgrep) — ship engines whose curated query packs concentrate on security vulnerabilities and data-flow attacks.
+- **AI PR reviewers** (Greptile, CodeRabbit) — index the whole codebase and emit human-language review comments; they explicitly admit in their own marketing that they miss cross-file bugs and need a deterministic backstop.
+- **Structural tools** (Knip, dependency-cruiser, Madge) — find dead code and import-graph cycles.
+- **Runtime validators** (Zod, Valibot) — prevention layer that requires the codebase to adopt them at every boundary.
 
-A grounded comparison of each tool above, with direct quotes from their own documentation, lives in [`COMPETITIVE_LANDSCAPE.md`](./COMPETITIVE_LANDSCAPE.md).
+None of these catalogue the specific, named production-bug patterns that bite JS / TS apps at the implicit contracts between files:
+
+- String-literal storage keys
+- `CustomEvent` channels
+- Classic-script globals
+- Module-scope captures of dynamic sources
+- Paired-key clusters
+- Serialized shape drift across `JSON.parse`
+
+That is the slot this tool is built for. Run it alongside what you already have; the findings don't overlap with any of the above.
+
+A grounded comparison of each tool in the list, with direct quotes from their own documentation, lives in [`COMPETITIVE_LANDSCAPE.md`](./COMPETITIVE_LANDSCAPE.md).
 
 ## Status
 
