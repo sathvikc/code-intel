@@ -127,6 +127,25 @@ recall anchor when revisiting months later.
 
 ---
 
+## P11 — Hydration mismatch from SSR-time reads of browser-only or time-varying sources
+
+- **Symptoms:** React console warning *"Text content does not match server-rendered HTML"* or *"Hydration failed because the initial UI does not match what was rendered on the server."* The mismatch can render visibly (wrong text, missing nodes, a momentary flash of the server tree before it's replaced) or degrade silently — hydration aborts on a subtree and React falls back to full client render, leaving later `useEffect`s to fire in the wrong order. Intermittent in production: the mismatch may only fire for users whose clock, locale, timezone, or browser fingerprint differs from the server's.
+- **Root cause:** a component's render path reads a source whose value differs between the SSR execution and the CSR hydration. Canonical source buckets:
+  - **Browser-only globals** — `window.*`, `document.*`, `navigator.*`, `localStorage.*`, `sessionStorage.*`. The server doesn't have these; guard branches (`typeof window !== 'undefined'`) evaluate differently and the two trees diverge.
+  - **Time-varying primitives** — `Date.now()`, `new Date()` (no args), `Math.random()`, `performance.now()`. The server renders at wall-clock `T0`; the client hydrates at `T1 > T0`.
+  - **Client-only state reads** — IndexedDB, a third-party SDK's in-memory state, client-only cache that's empty on the server.
+- **Static signal:** a JSX component file (function body or module scope of a file whose export is a component) contains a direct read of one of the above sources in the render path — not gated by `useEffect` / `useLayoutEffect`, not inside a client-only component boundary (`'use client'` *and* no server-component importer). Extra lift from the import graph: if the component is reachable from a server-rendered entry (Next.js `page.tsx`, Remix route, SvelteKit `+page.server.ts`, etc.), the mismatch is demonstrable rather than speculative — aligns with D10's describe-don't-predict rule.
+- **Relation to P5 (stale-module-capture):** P5 flags module-scope `const X = dynamic()` bindings frozen at load time. P11 flags render-path reads that execute on both server and client with different results. They intersect at *"module-scope `const X = window.foo` in a component file imported by SSR"* — where P5 already fires but labels only the staleness angle. P11 would layer the hydration-mismatch angle on top, potentially as the same detector with different confidence-reason text, keyed off whether the file is reachable from an SSR entry.
+- **Detector:** not-yet-built. Candidate name: `hydration-unsafe-read` or `ssr-unsafe-render`. Likely depends on **framework-context config** (already in `BACKLOG.md`) to know which entry files are server-rendered; without that, a conservative v1 rule would be *"flag the read if it lives in a `.tsx` file that exports a component and is neither marked `'use client'` nor gated by a lifecycle hook."*
+- **Source:** **Not a lived incident on this team — surfaced via web research during the 2026-04-19 planning review.** Cited here so the signal doesn't get lost; detector priority should not be treated as equivalent to P1–P10 until a real incident confirms the shape on a codebase we own. Evidence trail:
+  - Next.js's own `react-hydration-error` docs page, which enumerates these exact causes verbatim — <https://nextjs.org/docs/messages/react-hydration-error>
+  - High-volume Stack Overflow question on the React 18 manifestation — <https://stackoverflow.com/questions/71706064/react-18-hydration-failed-because-the-initial-ui-does-not-match-what-was-render>
+  - Next.js GitHub discussion showing a production-shape case (third-party browser extension injecting DOM) — <https://github.com/vercel/next.js/discussions/72035>
+  - Community guide walking through the fix landscape — <https://www.flowql.com/en/blog/guides/nextjs-hydration-failed-guide/>
+- **Note:** upgrade the `Source` line from *"web research"* to *"real incident"* when the pattern bites in a codebase we actually work on. The pattern log format is append-only, so the upgrade is an edit to this entry rather than a new `P<N>`.
+
+---
+
 ## Adding a new entry
 
 When the product owner shares a new bug (narrative form, LinkedIn post,
