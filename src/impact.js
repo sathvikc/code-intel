@@ -304,27 +304,50 @@ function confidencePairedKeys(detail) {
 }
 
 function confidenceDuplicateSvgId(detail) {
-  // The factual claim is always true for emitted findings: a static id
-  // attribute exists on an SVG element, AND a url(#<id>) or #<id>
-  // reference for the same id exists in the same file. Confidence
-  // modulates on whether the component is exported (likely to be
-  // rendered by multiple callers, so multi-instance collisions are
-  // plausible) vs local (only reachable from the single file it lives
-  // in, so the bug requires the file itself to render the component
-  // twice). v1 cannot inspect call sites across projects, so "exported"
-  // is our best proxy for reach.
-  const refCount = detail.occurrences.filter((o) => o.op === 'reference').length;
-  const declCount = detail.occurrences.filter((o) => o.op === 'declare').length;
+  // v2 per D10: confidence reflects whether the duplication is
+  // demonstrable in the current code (high) or merely an observed
+  // textual fact whose page-level impact we can't prove (low). We
+  // never predict future bugs.
+  const ev = detail.evidence ?? [];
+  const strong = ev.some(
+    (e) => e.type === 'in-file-loop'
+      || e.type === 'caller-loop'
+      || e.type === 'same-component-duplicate',
+  );
+  const compLabel = detail.component ? `<${detail.component}>` : 'this component';
+  if (strong) {
+    const reasons = [];
+    for (const e of ev) {
+      if (e.type === 'in-file-loop') {
+        reasons.push(`rendered inside a \`${e.method}(…)\` callback in the same file`);
+      } else if (e.type === 'caller-loop') {
+        reasons.push(`rendered inside a \`${e.method}(…)\` callback by an importer`);
+      } else if (e.type === 'same-component-duplicate') {
+        reasons.push(`declared ${e.count} times inside ${compLabel}`);
+      }
+    }
+    return {
+      confidence: 'high',
+      reason:
+        `Static id='${detail.id}' on <${detail.element}> — ${reasons.join(', ')}. `
+        + 'Every render emits ≥2 elements with the same id into the DOM, and the browser resolves every '
+        + 'url(#…) / href="#…" reference to whichever copy it saw first; the others paint with the wrong '
+        + '(or missing) gradient / filter / mask / symbol. Fix by deriving the id per instance '
+        + '(React.useId, nanoid, or a prop) and threading it through every declaration and reference.',
+    };
+  }
+  const crossOther = ev.find((e) => e.type === 'cross-component-duplicate')?.other;
+  const otherLabel = crossOther
+    ? `<${crossOther.component ?? '<anon>'}> (${crossOther.project}:${crossOther.file})`
+    : 'another component in the scanned set';
   return {
-    confidence: 'high',
+    confidence: 'low',
     reason:
-      `SVG element has a static id='${detail.id}' that is referenced within the same file by `
-      + `${refCount} url(#${detail.id}) / href="#${detail.id}" site(s) across ${declCount} declaration(s). `
-      + 'If this component ever renders more than once on a page — a list, a grid, an SSR/SSG pre-render — '
-      + 'every instance emits the same id into the DOM, and the browser resolves every url(#…) reference '
-      + 'to whichever copy it saw first. The other copies render with the wrong (or missing) gradient / '
-      + 'filter / mask / symbol. The fix is to derive the id per instance (React.useId, nanoid, or a prop) '
-      + 'and thread it through both the declaration and every reference.',
+      `Static id='${detail.id}' is declared by ${compLabel} and by ${otherLabel}. `
+      + 'The analyzer cannot prove the two components ever mount on the same page, so this is an observed '
+      + "textual duplication whose impact is uncertain — if the two components never co-render, nothing "
+      + 'breaks. Worth a quick audit: are these meant to share the id, or is one a copy-paste that should '
+      + 'be parameterized?',
   };
 }
 
@@ -396,10 +419,22 @@ function messageFor(kind, detail) {
       return `${detail.storage} paired-write cluster: [${detail.keys.map((k) => `'${k}'`).join(', ')}]`
         + ` — all callers should update together`;
     case 'duplicate-static-svg-id': {
-      const files = new Set(detail.occurrences.map((o) => `${o.project}:${o.file}`));
-      const file = files.size === 1 ? [...files][0].split(':').slice(1).join(':') : `${files.size} files`;
-      return `Static SVG id '${detail.id}' on <${detail.element}> referenced by url(#${detail.id}) in ${file}`
-        + ` — will collide on any page rendering this component more than once`;
+      const compLabel = detail.component ? `<${detail.component}>` : 'component';
+      const ev = detail.evidence?.[0];
+      if (ev?.type === 'in-file-loop') {
+        return `Static id='${detail.id}' on <${detail.element}> in ${compLabel} rendered inside ${ev.method}(…) — each iteration emits the same id`;
+      }
+      if (ev?.type === 'caller-loop') {
+        return `Static id='${detail.id}' on <${detail.element}> in ${compLabel} rendered inside ${ev.method}(…) at ${ev.at.project}:${ev.at.file} — each iteration emits the same id`;
+      }
+      if (ev?.type === 'same-component-duplicate') {
+        return `Static id='${detail.id}' declared ${ev.count} times inside ${compLabel} — duplicate in every render`;
+      }
+      if (ev?.type === 'cross-component-duplicate') {
+        const otherComp = ev.other.component ?? '<anon>';
+        return `Static id='${detail.id}' declared by ${compLabel} and <${otherComp}> (${ev.other.project}:${ev.other.file}) — may collide if both render together`;
+      }
+      return `Static id='${detail.id}' on <${detail.element}> in ${compLabel}`;
     }
     case 'shape-drift': {
       const wo = detail.writeOnlyKeys ?? [];
@@ -456,10 +491,11 @@ function findingIdFor(kind, detail) {
     return `${kind}:${keySig}@${loc?.project ?? '?'}:${loc?.file ?? '?'}:${loc?.line ?? 0}`;
   }
   if (kind === 'duplicate-static-svg-id') {
-    // File-scoped by construction: two files hardcoding the same id are
-    // independent bugs. Include project + file in the id.
+    // Component-scoped: two components in the same file declaring the
+    // same id are independent findings (each may have distinct evidence).
     const loc = detail.occurrences.find((o) => o.op === 'declare') ?? detail.occurrences[0];
-    return `${kind}:${detail.id}@${loc?.project ?? '?'}:${loc?.file ?? '?'}`;
+    const comp = detail.component ?? '<anon>';
+    return `${kind}:${detail.id}@${loc?.project ?? '?'}:${loc?.file ?? '?'}:${comp}`;
   }
   const key = detail.key ?? detail.channel ?? detail.name ?? 'anon';
   return `${kind}:${key}`;
@@ -548,11 +584,11 @@ function fingerprintFor(kind, detail) {
       parts.push(detail.storage ?? '?', detail.key ?? '');
       break;
     case 'duplicate-static-svg-id': {
-      // Per-file, per-id identity. Moving the component to a new file
-      // changes the fingerprint (it is effectively a different bug site);
-      // adding or removing url(#) references in the same file does not.
+      // Per-component, per-id identity. Moving the component to a new
+      // file or renaming it changes the fingerprint (different bug site);
+      // adding / removing url(#) refs or evidence kinds in place does not.
       const loc = detail.occurrences.find((o) => o.op === 'declare') ?? detail.occurrences[0] ?? {};
-      parts.push(detail.id ?? '', loc.project ?? '?', loc.file ?? '?');
+      parts.push(detail.id ?? '', loc.project ?? '?', loc.file ?? '?', detail.component ?? '<anon>');
       break;
     }
     default:

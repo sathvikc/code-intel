@@ -11,58 +11,43 @@ import {
   ANALYZER_ID,
 } from '../src/duplicate-static-svg-id.js';
 
-// ---------- unit: the canonical bug shape ----------
+// ---------- unit: observation shape (analyzeSource) ----------
+//
+// Under v2 (D10), `analyzeSource` does NOT emit findings; it produces a
+// per-file observation record. Cross-file stitching happens in
+// `analyzeProjects`. These tests pin the observation record.
 
-test('canonical: <linearGradient id="g"> + fill="url(#g)" emits one finding', () => {
-  const findings = analyzeSource(
+test('canonical shape produces one staticIdSite + anchor, but no analyzeSource findings API', () => {
+  const obs = analyzeSource(
     `export const Icon = () => (
        <svg>
-         <defs>
-           <linearGradient id="icon-fx" />
-         </defs>
+         <defs><linearGradient id="icon-fx" /></defs>
          <rect fill="url(#icon-fx)" />
        </svg>
      );`,
     'Icon.tsx',
   );
-  assert.equal(findings.length, 1);
-  const f = findings[0];
-  assert.equal(f.kind, 'duplicate-static-svg-id');
-  assert.equal(f.id, 'icon-fx');
-  assert.equal(f.element, 'linearGradient');
-  assert.equal(f.occurrences.length, 2);
-  const decl = f.occurrences.find((o) => o.op === 'declare');
-  const ref = f.occurrences.find((o) => o.op === 'reference');
-  assert.equal(decl.element, 'linearGradient');
-  assert.equal(ref.attribute, 'fill');
-  assert.equal(ref.via, 'url');
+  assert.equal(obs.staticIdSites.length, 1);
+  const site = obs.staticIdSites[0];
+  assert.equal(site.id, 'icon-fx');
+  assert.equal(site.element, 'linearGradient');
+  assert.equal(site.component, 'Icon');
+  assert.equal(site.inIteration, false);
+  assert.ok(obs.anchoredIds.has('icon-fx'));
+  assert.equal(obs.anchorRefs.length, 1);
+  assert.equal(obs.anchorRefs[0].via, 'url');
+  assert.equal(obs.anchorRefs[0].attribute, 'fill');
 });
 
-test('clipPath attribute carries a url(#id) reference', () => {
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <defs><clipPath id="cp-1"><rect /></clipPath></defs>
-         <image clipPath="url(#cp-1)" />
-       </svg>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'cp-1');
-  const ref = findings[0].occurrences.find((o) => o.op === 'reference');
-  assert.equal(ref.attribute, 'clipPath');
-  assert.equal(ref.via, 'url');
-});
-
-test('mask / filter / stroke carry url(#id) references', () => {
+test('clipPath / mask / filter / stroke carry url(#id) anchors', () => {
   for (const [attr, value] of [
+    ['clipPath', 'url(#cp-1)'],
     ['mask', 'url(#m1)'],
     ['filter', 'url(#f1)'],
     ['stroke', 'url(#s1)'],
   ]) {
     const id = value.match(/#([^)]+)/)[1];
-    const findings = analyzeSource(
+    const obs = analyzeSource(
       `export const C = () => (
          <svg>
            <defs><linearGradient id="${id}" /></defs>
@@ -71,16 +56,15 @@ test('mask / filter / stroke carry url(#id) references', () => {
        );`,
       `C-${attr}.tsx`,
     );
-    assert.equal(findings.length, 1, `expected finding for ${attr}`);
-    assert.equal(findings[0].id, id);
-    const ref = findings[0].occurrences.find((o) => o.op === 'reference');
-    assert.equal(ref.attribute, attr);
+    assert.ok(obs.anchoredIds.has(id), `expected anchor for ${attr}`);
+    const ref = obs.anchorRefs.find((r) => r.id === id);
     assert.equal(ref.via, 'url');
+    assert.equal(ref.attribute, attr);
   }
 });
 
-test('xlinkHref="#sym" on <use> emits a href-style reference', () => {
-  const findings = analyzeSource(
+test('xlinkHref="#sym" produces an href-style anchor', () => {
+  const obs = analyzeSource(
     `export const C = () => (
        <svg>
          <defs><symbol id="arrow"><path d="M0 0 L10 10" /></symbol></defs>
@@ -89,15 +73,14 @@ test('xlinkHref="#sym" on <use> emits a href-style reference', () => {
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'arrow');
-  const ref = findings[0].occurrences.find((o) => o.op === 'reference');
+  assert.ok(obs.anchoredIds.has('arrow'));
+  const ref = obs.anchorRefs.find((r) => r.id === 'arrow');
   assert.equal(ref.via, 'href');
   assert.equal(ref.attribute, 'xlinkHref');
 });
 
-test('href="#sym" (SVG2) on <use> emits a href-style reference', () => {
-  const findings = analyzeSource(
+test('href="#sym" (SVG2) is recorded as an href-style anchor', () => {
+  const obs = analyzeSource(
     `export const C = () => (
        <svg>
          <defs><symbol id="arrow" /></defs>
@@ -106,30 +89,22 @@ test('href="#sym" (SVG2) on <use> emits a href-style reference', () => {
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 1);
-  const ref = findings[0].occurrences.find((o) => o.op === 'reference');
+  const ref = obs.anchorRefs.find((r) => r.id === 'arrow');
   assert.equal(ref.via, 'href');
   assert.equal(ref.attribute, 'href');
 });
 
-test('a regular href URL (no leading #) is NOT treated as a fragment reference', () => {
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <a href="https://example.com">link</a>
-         <defs><linearGradient id="only-declared" /></defs>
-       </svg>
-     );`,
+test('a regular URL (no leading #) on <a href> is NOT an anchor', () => {
+  const obs = analyzeSource(
+    `export const C = () => <a href="https://example.com">link</a>;`,
     'C.tsx',
   );
-  // only-declared is declared but has no in-file anchor → no finding
-  assert.equal(findings.length, 0);
+  assert.equal(obs.anchorRefs.length, 0);
+  assert.equal(obs.anchoredIds.size, 0);
 });
 
-// ---------- unit: fold helper wiring ----------
-
-test('folds same-file `const GRAD = "literal"` on the id attribute', () => {
-  const findings = analyzeSource(
+test('folded same-file `const GRAD = "literal"` records foldedFrom on the site', () => {
+  const obs = analyzeSource(
     `const GRAD = 'grad-1';
      export const C = () => (
        <svg>
@@ -139,14 +114,13 @@ test('folds same-file `const GRAD = "literal"` on the id attribute', () => {
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'grad-1');
-  const decl = findings[0].occurrences.find((o) => o.op === 'declare');
-  assert.equal(decl.foldedFrom, 'GRAD');
+  assert.equal(obs.staticIdSites.length, 1);
+  assert.equal(obs.staticIdSites[0].id, 'grad-1');
+  assert.equal(obs.staticIdSites[0].foldedFrom, 'GRAD');
 });
 
-test('id={"literal"} JSX expression with inline string literal is treated as static', () => {
-  const findings = analyzeSource(
+test('id={"literal"} JSX expression is treated as static', () => {
+  const obs = analyzeSource(
     `export const C = () => (
        <svg>
          <defs><linearGradient id={"grad-2"} /></defs>
@@ -155,14 +129,12 @@ test('id={"literal"} JSX expression with inline string literal is treated as sta
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'grad-2');
+  assert.equal(obs.staticIdSites.length, 1);
+  assert.equal(obs.staticIdSites[0].id, 'grad-2');
 });
 
-// ---------- unit: dynamic cases that must NOT fire ----------
-
-test('id={useId()} is dynamic — no finding', () => {
-  const findings = analyzeSource(
+test('id={useId()} is dynamic — no staticIdSite', () => {
+  const obs = analyzeSource(
     `import { useId } from 'react';
      export const C = () => {
        const gid = useId();
@@ -175,11 +147,11 @@ test('id={useId()} is dynamic — no finding', () => {
      };`,
     'C.tsx',
   );
-  assert.equal(findings.length, 0);
+  assert.equal(obs.staticIdSites.length, 0);
 });
 
-test('template-literal id with a substitution is dynamic — no finding', () => {
-  const findings = analyzeSource(
+test('template-literal id with a substitution is dynamic', () => {
+  const obs = analyzeSource(
     `export const C = ({ suffix }) => (
        <svg>
          <defs><linearGradient id={\`grad-\${suffix}\`} /></defs>
@@ -188,11 +160,11 @@ test('template-literal id with a substitution is dynamic — no finding', () => 
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 0);
+  assert.equal(obs.staticIdSites.length, 0);
 });
 
-test('prop-passed id is dynamic — no finding', () => {
-  const findings = analyzeSource(
+test('prop-passed id is dynamic', () => {
+  const obs = analyzeSource(
     `export const C = ({ id }) => (
        <svg>
          <defs><linearGradient id={id} /></defs>
@@ -201,11 +173,11 @@ test('prop-passed id is dynamic — no finding', () => {
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 0);
+  assert.equal(obs.staticIdSites.length, 0);
 });
 
-test('reassigned `let` disqualifies folding, so it stays dynamic', () => {
-  const findings = analyzeSource(
+test('reassigned `let` disqualifies folding', () => {
+  const obs = analyzeSource(
     `let GRAD = 'grad-3';
      GRAD = 'grad-3-alt';
      export const C = () => (
@@ -216,15 +188,11 @@ test('reassigned `let` disqualifies folding, so it stays dynamic', () => {
      );`,
     'C.tsx',
   );
-  // GRAD is reassigned → not folded. The url(#grad-3) has no matching
-  // static declaration → no finding.
-  assert.equal(findings.length, 0);
+  assert.equal(obs.staticIdSites.length, 0);
 });
 
-// ---------- unit: anchor rule ----------
-
-test('static id without any url(#id) / #id reference in the same file → no finding', () => {
-  const findings = analyzeSource(
+test('static id without a matching anchor is observed but anchoredIds omits it', () => {
+  const obs = analyzeSource(
     `export const C = () => (
        <svg>
          <defs><linearGradient id="icon-unused" /></defs>
@@ -233,102 +201,12 @@ test('static id without any url(#id) / #id reference in the same file → no fin
      );`,
     'C.tsx',
   );
-  assert.equal(findings.length, 0);
+  assert.equal(obs.staticIdSites.length, 1);
+  assert.equal(obs.anchoredIds.has('icon-unused'), false);
 });
 
-test('DOM id on a div without a matching url/fragment reference → no finding', () => {
-  const findings = analyzeSource(
-    `export const C = () => <div id="main-app">hello</div>;`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 0);
-});
-
-test('url(#X) reference with no matching static declaration → no finding', () => {
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <rect fill="url(#nowhere)" />
-       </svg>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 0);
-});
-
-// ---------- unit: richer shapes ----------
-
-test('multiple url() references to the same id are all listed as occurrences', () => {
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <defs><linearGradient id="g" /></defs>
-         <rect fill="url(#g)" />
-         <circle stroke="url(#g)" />
-         <path fill="url(#g)" />
-       </svg>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 1);
-  const refs = findings[0].occurrences.filter((o) => o.op === 'reference');
-  assert.equal(refs.length, 3);
-});
-
-test('two distinct ids in one file produce two findings', () => {
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <defs>
-           <linearGradient id="g1" />
-           <linearGradient id="g2" />
-         </defs>
-         <rect fill="url(#g1)" />
-         <rect fill="url(#g2)" />
-       </svg>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 2);
-  const ids = findings.map((f) => f.id).sort();
-  assert.deepEqual(ids, ['g1', 'g2']);
-});
-
-test('an inline style attribute containing url(#id) still matches', () => {
-  // Inline style as a plain string (HTML-like) — some codebases still
-  // ship SVG with string-style attributes. The detector should catch this.
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <defs><linearGradient id="sg" /></defs>
-         <rect style="fill:url(#sg); stroke:black" />
-       </svg>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 1);
-  const ref = findings[0].occurrences.find((o) => o.op === 'reference');
-  assert.equal(ref.attribute, 'style');
-  assert.equal(ref.via, 'url');
-});
-
-test('non-SVG element with a static id still fires if a url(#id) references it', () => {
-  // Mixed DOM + SVG — the bug shape survives the boundary.
-  const findings = analyzeSource(
-    `export const C = () => (
-       <div>
-         <i id="mark" />
-         <svg><rect fill="url(#mark)" /></svg>
-       </div>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'mark');
-});
-
-test('JsxSpreadAttribute ({...props}) is ignored — does not crash or emit', () => {
-  const findings = analyzeSource(
+test('JsxSpreadAttribute ({...props}) is ignored without crashing', () => {
+  const obs = analyzeSource(
     `export const C = (props) => (
        <svg>
          <defs><linearGradient {...props} id="g" /></defs>
@@ -337,28 +215,12 @@ test('JsxSpreadAttribute ({...props}) is ignored — does not crash or emit', ()
      );`,
     'C.tsx',
   );
-  // Spread is skipped; the explicit id="g" is still a static declaration.
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'g');
+  assert.equal(obs.staticIdSites.length, 1);
+  assert.equal(obs.staticIdSites[0].id, 'g');
 });
 
-test('boolean attribute without initializer is ignored', () => {
-  // `<path disabled />` — `disabled` has no initializer; must not crash.
-  const findings = analyzeSource(
-    `export const C = () => (
-       <svg>
-         <defs><linearGradient id="g" /></defs>
-         <rect disabled fill="url(#g)" />
-       </svg>
-     );`,
-    'C.tsx',
-  );
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].id, 'g');
-});
-
-test('parses jsx (non-TS) without crashing', () => {
-  const findings = analyzeSource(
+test('parses .jsx without crashing', () => {
+  const obs = analyzeSource(
     `export const C = () => (
        <svg>
          <defs><linearGradient id="jsxid" /></defs>
@@ -367,20 +229,128 @@ test('parses jsx (non-TS) without crashing', () => {
      );`,
     'C.jsx',
   );
-  assert.equal(findings.length, 1);
+  assert.equal(obs.staticIdSites.length, 1);
 });
 
-test('plain .ts file (no JSX) produces no findings gracefully', () => {
-  // TypeScript parses .ts as non-JSX; JSX tokens would be errors.
-  // A .ts file with only regular code should not error or emit.
-  const findings = analyzeSource(
-    `export const k = 'not-an-svg';`,
-    'f.ts',
+test('plain .ts (no JSX) produces empty observations gracefully', () => {
+  const obs = analyzeSource(`export const k = 'not-an-svg';`, 'f.ts');
+  assert.equal(obs.staticIdSites.length, 0);
+  assert.equal(obs.anchorRefs.length, 0);
+  assert.equal(obs.jsxUsages.length, 0);
+});
+
+// ---------- iteration detection ----------
+
+test('in-file .map wrapping the declaration marks inIteration', () => {
+  const obs = analyzeSource(
+    `export const Grid = ({ items }) => (
+       <svg>
+         {items.map((i) => (
+           <g key={i.id}>
+             <defs><linearGradient id="g-iter" /></defs>
+             <rect fill="url(#g-iter)" />
+           </g>
+         ))}
+       </svg>
+     );`,
+    'Grid.tsx',
   );
-  assert.equal(findings.length, 0);
+  assert.equal(obs.staticIdSites.length, 1);
+  const site = obs.staticIdSites[0];
+  assert.equal(site.inIteration, true);
+  assert.equal(site.iterationMethod, 'map');
+  assert.ok(site.iterationSiteLine > 0);
 });
 
-// ---------- integration: analyzeProjects ----------
+test('forEach and flatMap count as iteration too', () => {
+  for (const method of ['forEach', 'flatMap']) {
+    const obs = analyzeSource(
+      `export const C = ({ items }) => (
+         <svg>
+           {items.${method}((i) => <rect fill="url(#m)" key={i}><linearGradient id="m" /></rect>)}
+         </svg>
+       );`,
+      `${method}.tsx`,
+    );
+    assert.equal(obs.staticIdSites.length, 1, `expected site for ${method}`);
+    assert.equal(obs.staticIdSites[0].inIteration, true);
+    assert.equal(obs.staticIdSites[0].iterationMethod, method);
+  }
+});
+
+test('Array.from(..., cb) is recognized as iteration', () => {
+  const obs = analyzeSource(
+    `export const C = ({ n }) => (
+       <svg>
+         {Array.from({ length: n }, (_, i) => (
+           <g key={i}>
+             <linearGradient id="arr-from-g" />
+             <rect fill="url(#arr-from-g)" />
+           </g>
+         ))}
+       </svg>
+     );`,
+    'C.tsx',
+  );
+  assert.equal(obs.staticIdSites.length, 1);
+  assert.equal(obs.staticIdSites[0].inIteration, true);
+  assert.equal(obs.staticIdSites[0].iterationMethod, 'Array.from');
+});
+
+test('named callback passed to .map does NOT flag as iteration (v1 gap)', () => {
+  // `items.map(renderIcon); function renderIcon() { return <X /> }` —
+  // the JSX inside renderIcon crosses a non-iteration function boundary,
+  // so we conservatively don't mark it. Documented as a known gap.
+  const obs = analyzeSource(
+    `function renderIcon(i) {
+       return (
+         <svg>
+           <linearGradient id="named-cb" />
+           <rect fill="url(#named-cb)" />
+         </svg>
+       );
+     }
+     export const List = ({ items }) => <>{items.map(renderIcon)}</>;`,
+    'List.tsx',
+  );
+  assert.equal(obs.staticIdSites.length, 1);
+  assert.equal(obs.staticIdSites[0].inIteration, false);
+});
+
+test('JSX usages of user components are captured; HTML/SVG lowercase tags are not', () => {
+  const obs = analyzeSource(
+    `export const Page = () => (
+       <div>
+         <CategoryIcon />
+         <SideBar />
+         <svg><rect /></svg>
+       </div>
+     );`,
+    'Page.tsx',
+  );
+  const names = obs.jsxUsages.map((u) => u.component).sort();
+  // Only user components rendered inside Page's JSX; lowercase tags (div/svg/rect)
+  // are not captured. Page itself is defined here, not rendered, so it is absent.
+  assert.deepEqual(names, ['CategoryIcon', 'SideBar']);
+});
+
+test('usage inside .map records inIteration on the jsxUsage', () => {
+  const obs = analyzeSource(
+    `export const Nav = ({ items }) => (
+       <>{items.map((i) => <CategoryIcon key={i.id} />)}</>
+     );`,
+    'Nav.tsx',
+  );
+  const use = obs.jsxUsages.find((u) => u.component === 'CategoryIcon');
+  assert.ok(use);
+  assert.equal(use.inIteration, true);
+  assert.equal(use.iterationMethod, 'map');
+});
+
+// ---------- integration: analyzeProjects emission ----------
+//
+// These tests pin the v2 emission rule: candidates only emit with at
+// least one evidence entry (E1-E4).
 
 function mktmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'code-intel-svg-id-test-'));
@@ -391,7 +361,9 @@ function write(root, rel, content) {
   fs.writeFileSync(full, content);
 }
 
-test('integration: single-file canonical bug surfaces one finding', () => {
+test('integration: lone component with static id + anchor, no loop, no duplicate → NO finding', () => {
+  // v2 pivot: this used to emit a "latent bug" finding under D9; D10
+  // says we don't predict the future, so the lone case is silent.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/Icon.tsx', `
@@ -403,45 +375,205 @@ test('integration: single-file canonical bug surfaces one finding', () => {
     );
   `);
   const r = analyzeProjects([a]);
-  assert.equal(r.findings.length, 1);
-  const f = r.findings[0];
-  assert.equal(f.id, 'icon-fx');
-  for (const o of f.occurrences) {
-    assert.equal(o.project, 'app');
-    assert.equal(o.file, 'src/Icon.tsx');
-    assert.ok(o.line > 0);
-    assert.ok(o.column > 0);
-  }
+  assert.equal(r.findings.length, 0);
 });
 
-test('integration: two files with the same hardcoded id produce two findings (not grouped)', () => {
+test('integration: E1 in-file loop emits one finding with in-file-loop evidence', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/Grid.tsx', `
+    export const Grid = ({ items }) => (
+      <svg>
+        {items.map((i) => (
+          <g key={i.id}>
+            <defs><linearGradient id="g-iter" /></defs>
+            <rect fill="url(#g-iter)" />
+          </g>
+        ))}
+      </svg>
+    );
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  const f = r.findings[0];
+  assert.equal(f.id, 'g-iter');
+  assert.equal(f.component, 'Grid');
+  const evTypes = f.evidence.map((e) => e.type);
+  assert.ok(evTypes.includes('in-file-loop'));
+  const inFile = f.evidence.find((e) => e.type === 'in-file-loop');
+  assert.equal(inFile.method, 'map');
+  assert.ok(f.occurrences.some((o) => o.op === 'declare'));
+  assert.ok(f.occurrences.some((o) => o.op === 'reference'));
+  assert.ok(f.occurrences.some((o) => o.op === 'iteration-site'));
+});
+
+test('integration: E2 caller loop — importer maps over <Icon />, emits caller-loop evidence', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/Icon.tsx', `
+    export const Icon = () => (
+      <svg>
+        <defs><linearGradient id="cat-fx" /></defs>
+        <rect fill="url(#cat-fx)" />
+      </svg>
+    );
+  `);
+  write(a, 'src/NavGrid.tsx', `
+    import { Icon } from './Icon';
+    export const NavGrid = ({ items }) => (
+      <nav>{items.map((i) => <Icon key={i.id} />)}</nav>
+    );
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  const f = r.findings[0];
+  assert.equal(f.id, 'cat-fx');
+  assert.equal(f.component, 'Icon');
+  const caller = f.evidence.find((e) => e.type === 'caller-loop');
+  assert.ok(caller, 'expected caller-loop evidence');
+  assert.equal(caller.method, 'map');
+  assert.equal(caller.at.file, 'src/NavGrid.tsx');
+  // The declaration lives in Icon.tsx even though the evidence points at NavGrid.tsx.
+  const decl = f.occurrences.find((o) => o.op === 'declare');
+  assert.equal(decl.file, 'src/Icon.tsx');
+});
+
+test('integration: E2 respects rename — `import { Icon as NavIcon }` still matched', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/icons.tsx', `
+    export const Icon = () => (
+      <svg><defs><linearGradient id="r-id" /></defs><rect fill="url(#r-id)" /></svg>
+    );
+  `);
+  write(a, 'src/nav.tsx', `
+    import { Icon as NavIcon } from './icons';
+    export const Nav = ({ items }) => <>{items.map((i) => <NavIcon key={i} />)}</>;
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  const f = r.findings[0];
+  assert.ok(f.evidence.some((e) => e.type === 'caller-loop'));
+});
+
+test('integration: E2 default import — `import Foo from`', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/Icon.tsx', `
+    const Icon = () => (
+      <svg><defs><linearGradient id="def-fx" /></defs><rect fill="url(#def-fx)" /></svg>
+    );
+    export default Icon;
+  `);
+  write(a, 'src/nav.tsx', `
+    import Icon from './Icon';
+    export const Nav = ({ items }) => <>{items.map((i) => <Icon key={i} />)}</>;
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  assert.ok(r.findings[0].evidence.some((e) => e.type === 'caller-loop'));
+});
+
+test('integration: E3 same-component duplicate — two declarations of same id in one component', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/C.tsx', `
+    export const C = () => (
+      <svg>
+        <defs>
+          <linearGradient id="same-fx" />
+          <linearGradient id="same-fx" />
+        </defs>
+        <rect fill="url(#same-fx)" />
+      </svg>
+    );
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  const f = r.findings[0];
+  const e = f.evidence.find((x) => x.type === 'same-component-duplicate');
+  assert.ok(e, 'expected same-component-duplicate evidence');
+  assert.equal(e.count, 2);
+});
+
+test('integration: E4 cross-component duplicate — same id in two different components', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/A.tsx', `
     export const A = () => (
-      <svg><defs><linearGradient id="g" /></defs><rect fill="url(#g)" /></svg>
+      <svg><defs><linearGradient id="shared" /></defs><rect fill="url(#shared)" /></svg>
     );
   `);
   write(a, 'src/B.tsx', `
     export const B = () => (
-      <svg><defs><linearGradient id="g" /></defs><rect fill="url(#g)" /></svg>
+      <svg><defs><linearGradient id="shared" /></defs><rect fill="url(#shared)" /></svg>
     );
   `);
   const r = analyzeProjects([a]);
+  // Two candidates (one per component). Each has E4 pointing at the
+  // other, so both emit.
   assert.equal(r.findings.length, 2);
-  const files = r.findings.map((f) => f.occurrences[0].file).sort();
-  assert.deepEqual(files, ['src/A.tsx', 'src/B.tsx']);
+  for (const f of r.findings) {
+    const e = f.evidence.find((x) => x.type === 'cross-component-duplicate');
+    assert.ok(e, 'expected cross-component-duplicate evidence on every finding');
+    assert.ok(e.other.component);
+  }
+});
+
+test('integration: lone candidate → skipped; same id in a loop → emitted (demonstrates pivot)', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/Lone.tsx', `
+    export const Lone = () => (
+      <svg><defs><linearGradient id="lone-id" /></defs><rect fill="url(#lone-id)" /></svg>
+    );
+  `);
+  write(a, 'src/Looped.tsx', `
+    export const Looped = ({ items }) => (
+      <svg>{items.map((i) => <g key={i}><linearGradient id="looped-id" /><rect fill="url(#looped-id)" /></g>)}</svg>
+    );
+  `);
+  const r = analyzeProjects([a]);
+  assert.equal(r.findings.length, 1);
+  assert.equal(r.findings[0].id, 'looped-id');
+});
+
+test('integration: candidate with both E1 and E4 carries both evidence entries', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/Grid.tsx', `
+    export const Grid = ({ items }) => (
+      <svg>
+        {items.map((i) => (
+          <g key={i}><linearGradient id="mixed" /><rect fill="url(#mixed)" /></g>
+        ))}
+      </svg>
+    );
+  `);
+  write(a, 'src/Other.tsx', `
+    export const Other = () => (
+      <svg><linearGradient id="mixed" /><rect fill="url(#mixed)" /></svg>
+    );
+  `);
+  const r = analyzeProjects([a]);
+  const grid = r.findings.find((f) => f.component === 'Grid');
+  assert.ok(grid);
+  const evTypes = grid.evidence.map((e) => e.type).sort();
+  assert.ok(evTypes.includes('in-file-loop'));
+  assert.ok(evTypes.includes('cross-component-duplicate'));
 });
 
 test('integration: ignores node_modules', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/Good.tsx', `
-    export const G = ({ id }) => <svg><rect fill={\`url(#\${id})\`} /></svg>;
+  write(a, 'src/Grid.tsx', `
+    export const Grid = ({ items }) => (
+      <svg>{items.map((i) => <g key={i}><linearGradient id="app-id" /><rect fill="url(#app-id)" /></g>)}</svg>
+    );
   `);
   write(a, 'node_modules/pkg/Bad.tsx', `
-    export const B = () => (
-      <svg><defs><linearGradient id="vendor" /></defs><rect fill="url(#vendor)" /></svg>
+    export const B = ({ items }) => (
+      <svg>{items.map((i) => <g key={i}><linearGradient id="vendor-id" /><rect fill="url(#vendor-id)" /></g>)}</svg>
     );
   `);
   const r = analyzeProjects([a]);
@@ -455,11 +587,10 @@ test('integration: ignores node_modules', () => {
 test('integration: schema shape', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/Icon.tsx', `
-    export const Icon = () => (
+  write(a, 'src/G.tsx', `
+    export const G = ({ items }) => (
       <svg>
-        <defs><linearGradient id="icon-fx"><stop /></linearGradient></defs>
-        <rect fill="url(#icon-fx)" />
+        {items.map((i) => <g key={i}><linearGradient id="schema-id" /><rect fill="url(#schema-id)" /></g>)}
       </svg>
     );
   `);
@@ -467,16 +598,18 @@ test('integration: schema shape', () => {
   assert.equal(r.version, SCHEMA_VERSION);
   assert.equal(r.analyzer, ANALYZER_ID);
   assert.equal(r.analyzer, 'duplicate-static-svg-id');
+  assert.equal(r.findings.length, 1);
   const f = r.findings[0];
   assert.equal(f.kind, 'duplicate-static-svg-id');
   assert.equal(typeof f.id, 'string');
   assert.equal(typeof f.element, 'string');
+  assert.ok('component' in f);
+  assert.ok(Array.isArray(f.evidence));
+  assert.ok(f.evidence.length > 0);
   assert.ok(Array.isArray(f.occurrences));
   const o = f.occurrences[0];
   assert.equal(typeof o.project, 'string');
   assert.equal(typeof o.file, 'string');
   assert.ok(typeof o.line === 'number' && o.line > 0);
-  assert.ok(typeof o.column === 'number' && o.column > 0);
-  assert.match(o.op, /^(declare|reference)$/);
-  assert.equal(typeof o.snippet, 'string');
+  assert.match(o.op, /^(declare|reference|iteration-site|duplicate-declaration)$/);
 });

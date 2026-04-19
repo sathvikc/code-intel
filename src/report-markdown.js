@@ -40,6 +40,7 @@ const KIND_LABELS = {
   'stale-module-capture': 'Stale module-scope capture',
   'paired-keys': 'Paired storage keys',
   'shape-drift': 'Shape drift across storage channel',
+  'duplicate-static-svg-id': 'Duplicate static SVG id',
 };
 
 export function renderMarkdown(result) {
