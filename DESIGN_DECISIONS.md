@@ -312,7 +312,7 @@ this came from a constant."
 
 ## D9 — `duplicate-static-svg-id`: flag the pattern, not the render count
 
-**Status:** active
+**Status:** superseded-by: D10
 **Related:** D2, D5, D8
 **Decision:** The `duplicate-static-svg-id` detector emits a finding
 when a JSX file contains (a) a static string-literal `id` attribute on
@@ -407,3 +407,96 @@ almost never misfires, built to dovetail with future build-output
 scanning rather than pre-empt it. The fold helper (D8) is reused
 rather than re-implemented, keeping the "what counts as static"
 rule unified across the detector catalogue.
+
+---
+
+## D10 — Detectors describe what is, not what might become
+
+**Status:** active
+**Supersedes:** D9
+**Related:** D2, D3, D4
+**Decision:** Detectors emit findings based on facts observable in the
+code *as it is today* — shapes that already are a bug, or clusters /
+coupling relationships / textual duplications that already exist.
+Detectors do NOT emit findings based on predictions about future code
+states ("if this component were ever rendered twice, it would…"). If
+we can't demonstrate the duplication / drift / coupling in the current
+scan, we stay silent.
+
+**Scope of this rule:**
+
+Applies to every detector. Concretely:
+
+- `shared-*`, `paired-keys`, `shape-drift`, `stale-module-capture`,
+  `duplicate-static-svg-id` — each already emits on present-tense
+  observations (two files touch the same key, two shapes disagree on
+  the same channel, etc.). The rule confirms the existing behaviour
+  for these and pins it going forward.
+- `duplicate-static-svg-id` previously violated this rule under D9,
+  which argued the detector should emit on the latent pattern ("this
+  component uses a static id; if it ever renders more than once, it
+  collides") regardless of whether we could observe the multi-render.
+  That approach produced noise on lone-use components. Under D10 it
+  now requires evidence of actual multi-render in the scanned set
+  (in-file loop, caller-loop via one-hop import graph, same-component
+  duplicate declaration, cross-component duplicate declaration). No
+  evidence → no emission.
+
+**Confidence tiers under D10:**
+
+- **`high`** — the duplication / coupling / drift is directly
+  demonstrable from observed code (e.g. the same id is declared twice
+  in one component, or the component sits inside a `.map(...)`).
+- **`low`** — an observation that we captured (two components declare
+  the same id string anywhere in the scanned set) whose page-level
+  impact we can't prove statically. We report it so reviewers can
+  audit; we do not claim it is a bug.
+- We never use `medium` to paper over "this is probably a future bug";
+  future-prediction claims are not emitted at all.
+
+**Framework context as config, not inference (referenced, not resolved
+here):**
+
+Prediction pressure often comes from trying to guess what a framework
+does to render behaviour (SSR / SSG / pre-render, SPA routing vs full
+reload, file-convention routing, etc.). The intended way to modulate
+findings on that axis is a project-level config the user declares
+(see Q3 for the config-format open question and the direction logged
+in `BACKLOG.md`). Detectors consume that config to tier / filter
+observed findings; they do not auto-detect framework context in v1.
+
+**Alternatives considered:**
+
+- **Keep D9's "flag the pattern" framing and rely on confidence
+  tiering to cool down noise.** Rejected on real output review: lone
+  single-use components were emitting warnings with no observable bug
+  today, and reviewers correctly pushed back. Confidence tiers can't
+  rescue a finding whose factual claim is a prediction — lowering the
+  tier makes the finding quieter but does not make it more true.
+- **Park the SVG detector entirely until build-output scanning lands.**
+  Rejected: there is a real bug class the source analyzer CAN observe
+  (loop-based multi-render, caller-loop multi-render, duplicate
+  declarations). Narrowing to what we can demonstrate preserves the
+  detector and drops the noise.
+- **Blanket silence for every `low`-confidence observation.** Rejected:
+  textual-duplication observations are still useful leads for human
+  review, and recall-first (D2) favors surfacing them with an honest
+  label over dropping them silently.
+
+**Reasoning:** The analyzer's credibility depends on every finding
+being true. When we say "this is a bug" we must mean it about today's
+code. Predictive findings move us from "here is coupling you may not
+have seen" to "here is something that might bite you one day" — a
+claim the reviewer can't verify without running the very experiment
+the tool was supposed to do for them. The descriptive rule also
+decouples each detector from its framework-specific assumptions: an
+SSR-only bug is still a bug when it actually renders multiple times,
+regardless of whether we happen to know the project is SSR.
+
+Schema v0.2 on `duplicate-static-svg-id` reflects this pivot: each
+finding now carries `component` (the enclosing component name) and
+`evidence: []` (one entry per observation type), with two new
+occurrence `op` values (`iteration-site`, `duplicate-declaration`) so
+consumers can see where the evidence lives. Older consumers reading
+v0.1 will need to re-read on the new shape; no v0.1 adaptor is
+provided (pre-1.0).

@@ -291,3 +291,31 @@ Design questions within the decision:
   the MCP `whoReadsKey` / `whoWritesKey` tools answer the same
   question. Their shapes should stay in sync; decide whether the
   schema lives in the CLI surface, the MCP surface, or a shared one.
+
+---
+
+## Q13 — `stale-module-capture` finding language: "will be stale" vs "module-scope capture"
+
+**Why it matters:** D10 pins the rule that detectors describe what is,
+not what might become. The `stale-module-capture` detector currently
+emits findings whose confidence-reason paragraph uses language like
+"the stale value will be returned" — a prediction about a specific
+runtime scenario (SPA / SSR client / worker). The underlying fact
+the detector observes — "module-scope binding captures a dynamic
+source at import time" — is descriptive and correct under D10; only
+the *explanation* has prediction-flavored wording.
+
+**Working assumption:** The detector stays as-is. The prediction
+wording in the confidence-reason paragraph is borderline, not
+outright wrong — the stale value literally will be returned once the
+captured source's state changes in a runtime where modules persist.
+The finding's headline message and schema are descriptive already.
+
+**Needs:** A pass over the confidence-reason text to separate the
+observation ("module-scope capture of X") from the runtime context
+("in SPAs / workers / SSR this means Y") so readers can distinguish
+the fact from the forecast. Low priority — deferred until either a
+dogfood review surfaces noise on this detector, or the framework-
+context config from the D10 / Q3 track lands and we can say "in this
+project `navigation=full-reload`, so this finding is informational
+only" structurally.

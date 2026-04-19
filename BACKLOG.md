@@ -18,7 +18,7 @@ Shipped (also listed for cross-reference with `PATTERNS.md`):
 - [x] `stale-captures` — stale module-scope capture of dynamic sources (P5)
 - [x] `paired-keys` — co-located `setItem` cluster in one function body (P10)
 - [x] `shape-drift` v1 — storage channel; literal-literal write/read shape disagreement on a shared key (addresses P9 for the storage case; catches the literal side of P4)
-- [x] `duplicate-static-svg-id` — static SVG ids with in-file `url(#id)` / `xlinkHref="#id"` anchors that collide on every repeated render (P6 / see D9)
+- [x] `duplicate-static-svg-id` — static SVG ids with in-file `url(#id)` / `xlinkHref="#id"` anchors, emitted only when actual multi-render is demonstrable: in-file loop, caller-loop via the import graph, same-component duplicate, or cross-component duplicate (P6 / see D10 supersedes D9)
 - [x] `impact` — unified orchestrator: runs all detectors, adds `--since <ref>` diff-awareness, blast-radius via import graph, markdown + JSON reporters
 - [x] import-graph — AST-based reverse import graph + BFS blast-radius traversal
 
@@ -63,3 +63,5 @@ Planned:
 - [ ] Blast-radius query ("what breaks if I change this file?")
 - [ ] `trace` subcommand — per-symbol graph query (all readers/writers/dispatchers/listeners for a named storage key, event channel, or global); Tier 1 is reshape-only, Tier 2 adds declared-symbol resolution (see Q12)
 - [ ] Run on a real multi-repo codebase — see what actually falls apart
+- [ ] Plugin / rule-pack architecture — user-authored detection rules, per-project enable / disable, and framework-specific rule packs (e.g. "SPA with full-reload navigation: don't flag shared-state across pages"). Depends on config format (Q3) + inline-suppression syntax (Q5) + the self-improving suppression loop (Q9) as the three pieces of the same puzzle; this bullet is the synthesis that turns them from plumbing into a product shape.
+- [ ] Framework context config — user-declared `rendering: ssr | ssg | spa | ssr-prerender` and `navigation: spa | full-reload` on each project, consumed by detectors to tier / filter findings. Primary near-term use case: let the SVG detector and shared-state detectors treat findings differently under different rendering / navigation models without auto-detecting the framework (see D10 for the rationale; implementation lives under Q3).
