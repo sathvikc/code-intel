@@ -17,6 +17,7 @@
 // are grouped across them so cross-repo coupling surfaces the same way
 // in-project coupling does.
 
+import { createAstCache } from './ast-cache.js';
 import * as impact from './impact.js';
 import * as trace from './trace.js';
 import { renderMarkdown } from './report-markdown.js';
@@ -32,7 +33,7 @@ const ANALYZER_COMMANDS = Object.fromEntries(
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--markdown|--json] [--pretty] [--exclude <path>]
-                             [--only <ids>] [--skip <ids>]
+                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
                              [paths...] [--format json|mermaid] [--pretty] [--exclude <path>]
   code-intel shared-state    [paths...] [--pretty] [--exclude <path>]
@@ -110,6 +111,14 @@ Options:
                   after --only if both are given. Repeatable. Unknown ids
                   fail fast.
                   Known ids: ${DETECTOR_IDS.join(', ')}.
+  --no-cache      (impact only) disable the per-run AST cache. Each detector
+                  reads and parses each file itself (pre-D14 behaviour).
+                  Useful for benchmarking or as a safety escape hatch.
+                  Mutually exclusive with --cache-stats.
+  --cache-stats   (impact only) print { size, hits, misses, readErrors,
+                  parseErrors } of the per-run AST cache to stderr after
+                  the run. Observability flag; does not change output
+                  content. Mutually exclusive with --no-cache.
   -h, --help      Show this help.
 `;
 
@@ -148,6 +157,8 @@ function parseImpactArgs(argv) {
     exclude: [],
     only: [],
     skip: [],
+    noCache: false,
+    cacheStats: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -171,8 +182,13 @@ function parseImpactArgs(argv) {
       if (!v) throw new Error(`--skip requires a value (comma-separated detector ids)`);
       args.skip.push(...splitIdList(v));
     }
+    else if (a === '--no-cache') args.noCache = true;
+    else if (a === '--cache-stats') args.cacheStats = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
+  }
+  if (args.noCache && args.cacheStats) {
+    throw new Error(`--no-cache and --cache-stats are mutually exclusive (stats are empty when the cache is disabled)`);
   }
   if (args.paths.length === 0) args.paths.push('.');
   // Default format: markdown when --since is set (PR-report use case) or when
@@ -195,11 +211,17 @@ async function runImpact(argv) {
     process.stdout.write(USAGE);
     return 0;
   }
+  // When --cache-stats is set, we construct the cache here so we can read
+  // its stats after the run. Otherwise impact.analyzeProjects creates its
+  // own internal cache (or skips it, under --no-cache).
+  const astCache = args.cacheStats ? createAstCache() : undefined;
   const result = impact.analyzeProjects(args.paths, {
     since: args.since,
     exclude: args.exclude,
     only: args.only.length > 0 ? args.only : undefined,
     skip: args.skip.length > 0 ? args.skip : undefined,
+    noCache: args.noCache || undefined,
+    astCache,
   });
 
   if (args.format === 'markdown') {
@@ -214,6 +236,13 @@ async function runImpact(argv) {
   const gitLine = result.integrations?.git?.available
     ? ` | base ${result.meta.base} | ${result.meta.changedFileCount} changed`
     : '';
+  if (astCache) {
+    const c = astCache.stats();
+    process.stderr.write(
+      `cache: size=${c.size} hits=${c.hits} misses=${c.misses}`
+        + ` readErrors=${c.readErrors} parseErrors=${c.parseErrors}\n`,
+    );
+  }
   process.stderr.write(
     `code-intel / impact${gitLine}: `
       + `${s.totalFindings} finding(s) — `

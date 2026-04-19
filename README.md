@@ -41,6 +41,14 @@ code-intel impact . --exclude examples --exclude docs --markdown
 # at all, so this is the cheapest available filter.
 code-intel impact . --only shared-state,shared-events
 code-intel impact . --skip duplicate-static-svg-id
+
+# Show cache usage (size/hits/misses) on stderr — useful when
+# sizing impact on a real repo.
+code-intel impact . --cache-stats
+
+# Disable the per-run AST cache (pre-D14 behaviour). Benchmarking or
+# safety escape hatch; normal runs want the default.
+code-intel impact . --no-cache
 ```
 
 The `impact` command is designed to answer *"what did this change put at risk?"* — not *"list every pattern in this repo."* It runs every detector in one pass, annotates each finding with `touchesChange` when a change set is given, sorts change-touching findings first, and includes the transitive import-graph blast radius of the changed files. Every finding also carries a severity (blast-radius heuristic), a confidence level (`high` / `medium` / `low`) with a one-paragraph justification, and a stable fingerprint for dedup and tracking across runs.

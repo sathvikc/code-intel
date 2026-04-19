@@ -881,8 +881,15 @@ wall-time reduction with no behavioral change.
   structurally equal (minus `meta.timestamp`) with and without the
   cache on a fixture project touched by multiple detectors.
 - **Observability.** `cache.stats()` reports `{ size, hits, misses,
-  readErrors, parseErrors }`. Not wired into CLI output yet; used by
-  tests and available for future `--verbose`.
+  readErrors, parseErrors }`. Exposed via `impact --cache-stats` (the
+  CLI constructs the cache itself, threads it in via `opts.astCache`,
+  and prints stats to stderr after the run).
+- **Escape hatch.** `impact --no-cache` (programmatic:
+  `opts.noCache: true`) disables the cache entirely; every detector
+  falls back to its own fs + parse path. Kept for benchmarking,
+  regression safety, and the rare case where a future bug in the
+  cache needs a one-flag bypass. Mutually exclusive with
+  `--cache-stats` (stats are meaningless when the cache is off).
 
 **Alternatives considered:**
 

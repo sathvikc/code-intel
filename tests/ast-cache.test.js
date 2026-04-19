@@ -157,6 +157,57 @@ export function listen(cb) {
   assert.ok(stats.hits > 0, 'cache was hit by downstream detectors');
 });
 
+test('impact analyzeProjects: opts.noCache produces structurally identical output to cached run', () => {
+  const tmp = mktmp();
+  write(tmp, 'package.json', JSON.stringify({ name: 'no-cache-regress' }));
+  write(
+    tmp,
+    'src/user.js',
+    `export function saveUser(u) {
+  localStorage.setItem('app.session', JSON.stringify({ v: 1, name: u.name }));
+}
+export function readUser() {
+  return JSON.parse(localStorage.getItem('app.session') ?? '{}');
+}
+`,
+  );
+  write(
+    tmp,
+    'src/events.js',
+    `window.dispatchEvent(new CustomEvent('app:update', { detail: { v: 1 } }));
+window.addEventListener('app:update', () => {});
+`,
+  );
+
+  const stripTs = (r) => {
+    const { meta, ...rest } = r;
+    const { timestamp, ...metaRest } = meta;
+    return { ...rest, meta: metaRest };
+  };
+
+  const cached = impactAnalyze([tmp], {});
+  const uncached = impactAnalyze([tmp], { noCache: true });
+  assert.deepEqual(
+    stripTs(cached),
+    stripTs(uncached),
+    'noCache: true produces the same output as the default cached run',
+  );
+});
+
+test('impact analyzeProjects: opts.noCache ignores an injected astCache', () => {
+  const tmp = mktmp();
+  write(tmp, 'package.json', JSON.stringify({ name: 'no-cache-wins' }));
+  write(tmp, 'src/a.js', `localStorage.setItem('k', '1');\n`);
+
+  const cache = createAstCache();
+  impactAnalyze([tmp], { noCache: true, astCache: cache });
+  // With noCache: true, the injected cache is never consulted.
+  const stats = cache.stats();
+  assert.equal(stats.size, 0, 'cache was never touched');
+  assert.equal(stats.hits, 0);
+  assert.equal(stats.misses, 0);
+});
+
 test('impact analyzeProjects: passing astCache returns the same detector set as a fresh run', () => {
   const tmp = mktmp();
   write(tmp, 'package.json', JSON.stringify({ name: 'cache-determinism' }));

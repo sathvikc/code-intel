@@ -635,9 +635,16 @@ export function gitChangedFiles(cwd, base) {
  * @param {string[]} [opts.only]          detector ids to run; if given, others are skipped
  * @param {string[]} [opts.skip]          detector ids to skip; applied after `only`
  * @param {ReturnType<typeof createAstCache>} [opts.astCache]  injected cache,
- *                                         used by tests that want to inspect
- *                                         hit/miss stats. Normal callers omit
- *                                         this and get a fresh per-run cache.
+ *                                         used by tests and by `--cache-stats`
+ *                                         to inspect hit/miss totals after
+ *                                         the run. Normal callers omit this
+ *                                         and get a fresh per-run cache.
+ * @param {boolean} [opts.noCache]         explicit opt-out: when true, no
+ *                                         cache is created and every detector
+ *                                         falls back to its own fs + parse
+ *                                         path (pre-D14 behaviour). Useful
+ *                                         for benchmarking, debugging, and
+ *                                         worst-case regression safety.
  */
 export function analyzeProjects(projectRoots, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
@@ -646,9 +653,11 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // One cache for the whole run. Each source file is read + parsed on first
   // touch and reused by every subsequent detector and by import-graph. The
   // cache is deliberately per-run: no cross-run persistence, no content
-  // hashing. Detectors that don't receive a cache fall back to their own
-  // fs/TS calls (backward compatible with direct unit-test callers).
-  const astCache = opts.astCache ?? createAstCache();
+  // hashing. `opts.noCache` is an explicit opt-out that returns the
+  // pre-D14 "each detector parses its own copy" behaviour; detectors
+  // already handle a null/undefined astCache by falling through to their
+  // own fs + parse path, so passing null here is sufficient.
+  const astCache = opts.noCache ? null : (opts.astCache ?? createAstCache());
   // Registry-driven detector selection. Unknown ids in `only`/`skip` throw
   // from selectDetectors — we let that propagate so a typo surfaces at the
   // CLI boundary rather than quietly producing an empty-but-valid report.
