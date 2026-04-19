@@ -159,8 +159,9 @@ export function analyzeSource(code, filePath) {
  * or href="#id") exists in the same file. A candidate only emits when
  * at least one evidence entry (E1-E4) applies.
  */
-export function analyzeProjects(projectRoots) {
+export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
   const rootById = new Map(projects.map((p) => [p.id, p.root]));
   const aliasesByProject = new Map(projects.map((p) => [p.id, loadAliases(p.root)]));
 
@@ -169,7 +170,7 @@ export function analyzeProjects(projectRoots) {
   const observationsByFile = new Map();
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
       try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
       let obs;
@@ -183,7 +184,7 @@ export function analyzeProjects(projectRoots) {
   }
 
   // Reverse import graph (who imports what).
-  const { graph: reverseGraph } = buildReverseGraph(projectRoots);
+  const { graph: reverseGraph } = buildReverseGraph(projectRoots, { exclude });
 
   // Collect candidates. A candidate is a (file, component, id) combo that
   // has at least one static-id declaration AND the file has an anchor for

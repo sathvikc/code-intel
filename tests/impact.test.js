@@ -508,3 +508,66 @@ test('renderMarkdown: includes blast radius section when present', () => {
   assert.ok(md.includes('## Blast Radius'));
   assert.ok(md.includes('consumer.ts'));
 });
+
+// ---------- opts.exclude (Q14 / D11) ----------
+
+test('exclude: orchestrator passes opts.exclude through to every detector', () => {
+  // Two sibling trees with overlapping shared-storage-key findings. If the
+  // orchestrator forwards the exclude correctly, one tree drops out and the
+  // cross-file finding collapses.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  // Real source (scanned)
+  write(a, 'src/writer.ts', `localStorage.setItem('shared.key', 1);`);
+  write(a, 'src/reader.ts', `localStorage.getItem('shared.key');`);
+  // Fixture tree (excluded in one of the two runs below)
+  write(a, 'examples/broken.ts', `
+    localStorage.setItem('fixture.key', 1);
+    document.cookie;
+    window.CUSTOM_GLOBAL = 1;
+  `);
+
+  const baseline = analyzeProjects([a]);
+  const excluded = analyzeProjects([a], { exclude: ['examples'] });
+
+  // Baseline must surface findings from examples/; the exclude run must not.
+  assert.ok(baseline.findings.some((f) => f.id.includes('fixture.key')),
+    'baseline should see the fixture key');
+  assert.ok(
+    !excluded.findings.some((f) => f.id.includes('fixture.key')),
+    'excluded run must NOT see fixture.key',
+  );
+  // The real shared.key finding should survive the exclude.
+  assert.ok(
+    excluded.findings.some((f) => f.id.includes('shared.key')),
+    'excluded run should still see shared.key (src/ is not excluded)',
+  );
+});
+
+test('exclude: blast radius respects opts.exclude', () => {
+  // A file inside an excluded tree that transitively imports a changed
+  // file must NOT appear in the blast radius, because it was never
+  // indexed by the graph builder.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/target.ts', `export const x = 1;`);
+  write(a, 'src/consumer.ts', `import { x } from './target'; export const y = x;`);
+  write(a, 'examples/also-consumer.ts', `import { x } from '../src/target'; export const z = x;`);
+
+  const baseline = analyzeProjects([a], { changedFiles: [path.join(a, 'src/target.ts')] });
+  const excluded = analyzeProjects([a], {
+    changedFiles: [path.join(a, 'src/target.ts')],
+    exclude: ['examples'],
+  });
+
+  assert.ok(
+    baseline.graph.blastRadius.some((b) => b.file.endsWith('also-consumer.ts')),
+    'baseline should include examples/also-consumer.ts',
+  );
+  assert.ok(
+    !excluded.graph.blastRadius.some((b) => b.file.endsWith('also-consumer.ts')),
+    'exclude must drop examples/also-consumer.ts from blast radius',
+  );
+  // src/consumer.ts must still be found in both runs.
+  assert.ok(excluded.graph.blastRadius.some((b) => b.file.endsWith('consumer.ts')));
+});

@@ -500,3 +500,88 @@ occurrence `op` values (`iteration-site`, `duplicate-declaration`) so
 consumers can see where the evidence lives. Older consumers reading
 v0.1 will need to re-read on the new shape; no v0.1 adaptor is
 provided (pre-1.0).
+
+---
+
+## D11 — User-configurable directory excludes via `--exclude`
+
+**Status:** active
+**Resolves:** Q14
+**Related:** Q3 (config format), Q5 (inline suppressions)
+
+**Decision:** The CLI accepts a repeatable `--exclude <path>` flag on
+`impact` and on every per-analyzer subcommand. Each `<path>` is a
+**project-root-relative directory path** resolved against each project
+root; the walker prunes the entire subtree at that path. The flag is
+threaded through `analyzeProjects(projectRoots, opts = {})` on every
+analyzer via a new `opts.exclude: string[]` parameter.
+
+**Scope of the v1 slice:**
+
+- **Literal paths, no globs.** `--exclude examples` and
+  `--exclude examples/generated` both work. `--exclude "**/__tests__"`
+  would be interpreted as a literal directory named `**/__tests__`
+  (and therefore match nothing). Glob support is a v2 that lives under
+  Q3 when the config format lands.
+- **Directory-level only.** File-level excludes (`--exclude foo/bar.ts`)
+  are not supported; the walker prunes by directory path match, and
+  source files are yielded after pruning.
+- **Repeatable.** Multiple `--exclude` flags are and-ed: each listed
+  directory is pruned independently.
+- **Hardcoded `IGNORED_DIRS` wins.** `node_modules`, `dist`, `build`,
+  `.git`, `coverage`, `.next`, `.turbo`, `.cache` are always excluded,
+  regardless of whether the user passes them to `--exclude`. A
+  regression test pins this — a nonsensical `--exclude node_modules`
+  stays a no-op (not a re-include).
+- **Project-root-relative.** In multi-project mode, each `<path>` is
+  resolved against *each* project root independently. `--exclude docs`
+  on `code-intel impact apps/web apps/admin` skips `apps/web/docs` and
+  `apps/admin/docs`; it does not require two separate flags.
+
+**Alternatives considered:**
+
+- **Hardcoded `IGNORED_DIRS` expanded to include `examples`, `docs`,
+  `e2e`, `fixtures`, `storybook-static`.** Rejected: some projects
+  legitimately want those directories scanned (a library whose
+  `examples/` tree is real production code shipped to users, a
+  `docs/` that contains live MDX imported by the app). A hardcoded
+  default that guesses wrong is worse than no default.
+- **Ship full glob matching in v1.** Rejected for this slice:
+  requires either an experimental Node API (`path.matchesGlob` is
+  flagged unstable in v22), a new runtime dependency (`micromatch` /
+  `minimatch`), or a hand-rolled matcher. None of those belong in a
+  30-minute dogfood-unblocking slice. The directory-path literal
+  covers the 90% case (*"I have `examples/` at root, skip it"*) at
+  zero cost.
+- **File-pattern excludes (`--exclude "**/*.test.ts"`).** Rejected as
+  scope creep for v1. Test files rarely produce findings anyway
+  (detectors are tuned for production coupling, not mock setup in
+  tests), and the directory-level cover is sufficient for the pain
+  the flag was added to solve.
+- **CLI flag only, no programmatic API.** Rejected: downstream
+  consumers (the planned MCP tool Q7; the planned `trace` subcommand
+  Q12; any automation) need the same knob. `opts.exclude` on each
+  `analyzeProjects` is the programmatic surface; `--exclude` is its
+  CLI affordance.
+
+**Relationship to Q3 (config format) and Q5 (inline suppressions):**
+
+- When Q3 lands, `exclude: []` will be the obvious config key; the
+  CLI flag then becomes an **additive** override (not a replacement)
+  so config-declared excludes survive one-off flag use. The flag
+  shape ships unchanged.
+- Q5 (inline suppressions) operates at a different layer — it
+  filters at **emission**, not at **ingestion**. D11 and Q5 are
+  non-overlapping; a user will commonly want both.
+
+**Reasoning:** Dogfooding `code-intel impact .` on the repo surfaced
+the pain immediately — 12 findings from `examples/`, zero from `src/`.
+Any real repo with `examples/`, `docs/`, `e2e/`, or a sibling
+package's build output at root would hit the same wall on first use.
+The zero-config promise in `VISION.md` (*"works on any JS/TS repo
+with no setup"*) specifically calls out that every behavior should
+also be configurable via CLI flags; this flag is the first such
+affordance after the positional paths themselves. Shipping the
+simplest useful shape now and letting Q3's config format absorb the
+richer cases later matches the recall-first, ship-partial-iterate
+rhythm that D2 and D3 encode.

@@ -246,15 +246,16 @@ export function analyzeSource(code, filePath) {
  * Run the analyzer across N project roots. Two-pass: collect all readers
  * across all files first, then scan for captures with the full reader set.
  */
-export function analyzeProjects(projectRoots) {
+export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
 
   const readerNames = new Set();
   const parsed = [];
 
   // Pass 1: parse every file, collect reader names.
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
       try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
       let sf;

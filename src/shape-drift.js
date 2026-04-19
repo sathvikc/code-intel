@@ -427,13 +427,14 @@ export function analyzeSource(code, filePath) {
  * sites by (storage, key), then emits a finding per channel where both
  * sides have ≥1 literal-shape observation AND the union shapes disagree.
  */
-export function analyzeProjects(projectRoots) {
+export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
   /** @type {Map<string, { storage, key, writes: any[], reads: any[] }>} */
   const channels = new Map();
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
       try {
         code = fs.readFileSync(absFile, 'utf8');

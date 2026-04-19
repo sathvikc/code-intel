@@ -262,12 +262,13 @@ function scriptKindFor(filePath) {
  * functions that happen to write the same pair of keys produce two
  * findings, because the invariant lives per-function.
  */
-export function analyzeProjects(projectRoots) {
+export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
   const findings = [];
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
       try {
         code = fs.readFileSync(absFile, 'utf8');

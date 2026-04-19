@@ -212,14 +212,15 @@ function scriptKindFor(filePath) {
 /**
  * Run the analyzer across N project roots and return the schema-shaped result.
  */
-export function analyzeProjects(projectRoots) {
+export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
   // group key: storage + '::' + (key ?? `__dynamic__::${project}::${file}::${line}`)
   // static keys are grouped across projects; dynamic occurrences stay per-site.
   const groups = new Map();
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
       try {
         code = fs.readFileSync(absFile, 'utf8');

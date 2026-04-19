@@ -43,8 +43,17 @@ export function resolveProject(root) {
 
 /**
  * Walk a directory and yield absolute paths to source files worth parsing.
+ *
+ * opts.exclude: array of root-relative directory paths to skip (literal, no
+ * globs in v1). Each entry is resolved against `root`; when the walker
+ * reaches a directory whose absolute path equals one of those, the entire
+ * subtree is pruned. IGNORED_DIRS stays hardcoded on top of this — a user
+ * cannot re-include `node_modules` via this option.
  */
-export function* walkSourceFiles(root) {
+export function* walkSourceFiles(root, opts = {}) {
+  const excludeSet = new Set(
+    (opts.exclude ?? []).map((e) => path.resolve(root, e)),
+  );
   const stack = [root];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -62,6 +71,7 @@ export function* walkSourceFiles(root) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
         if (IGNORED_DIRS.has(e.name)) continue;
+        if (excludeSet.has(full)) continue;
         stack.push(full);
       } else if (e.isFile()) {
         if (SOURCE_EXTENSIONS.has(path.extname(e.name))) yield full;

@@ -118,14 +118,14 @@ const ANALYZER_COMMANDS = {
 };
 
 const USAGE = `Usage:
-  code-intel impact          [paths...] [--since <ref>] [--markdown|--json] [--pretty]
-  code-intel shared-state    [paths...] [--pretty]
-  code-intel shared-events   [paths...] [--pretty]
-  code-intel shared-globals  [paths...] [--pretty]
-  code-intel stale-captures  [paths...] [--pretty]
-  code-intel paired-keys     [paths...] [--pretty]
-  code-intel shape-drift     [paths...] [--pretty]
-  code-intel duplicate-static-svg-id [paths...] [--pretty]
+  code-intel impact          [paths...] [--since <ref>] [--markdown|--json] [--pretty] [--exclude <path>]
+  code-intel shared-state    [paths...] [--pretty] [--exclude <path>]
+  code-intel shared-events   [paths...] [--pretty] [--exclude <path>]
+  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>]
+  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>]
+  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>]
+  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>]
+  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -167,14 +167,26 @@ Options:
                   or when stdout is a TTY).
   --json          (impact only) Emit unified JSON report.
   --pretty        Pretty-print JSON output.
+  --exclude <path>
+                  Project-root-relative directory path to skip. Repeatable.
+                  Literal paths only (no globs in v1); --exclude examples and
+                  --exclude examples/generated both work. Hardcoded ignores
+                  (node_modules, dist, build, .git, coverage, .next, .turbo,
+                  .cache) always apply on top and cannot be overridden.
   -h, --help      Show this help.
 `;
 
 function parseCommonArgs(argv) {
-  const args = { paths: [], pretty: false, help: false };
-  for (const a of argv) {
+  const args = { paths: [], pretty: false, help: false, exclude: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     if (a === '--pretty') args.pretty = true;
     else if (a === '-h' || a === '--help') args.help = true;
+    else if (a === '--exclude') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--exclude requires a value`);
+      args.exclude.push(v);
+    }
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -189,6 +201,7 @@ function parseImpactArgs(argv) {
     format: null, // 'markdown' | 'json' — decided below if null
     pretty: false,
     help: false,
+    exclude: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -197,6 +210,11 @@ function parseImpactArgs(argv) {
     else if (a === '--json') args.format = 'json';
     else if (a === '--markdown') args.format = 'markdown';
     else if (a === '--pretty') args.pretty = true;
+    else if (a === '--exclude') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--exclude requires a value`);
+      args.exclude.push(v);
+    }
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -221,7 +239,7 @@ async function runImpact(argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = impact.analyzeProjects(args.paths, { since: args.since });
+  const result = impact.analyzeProjects(args.paths, { since: args.since, exclude: args.exclude });
 
   if (args.format === 'markdown') {
     process.stdout.write(renderMarkdown(result));
@@ -261,7 +279,7 @@ async function runAnalyzer(sub, argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = cmd.analyzer.analyzeProjects(args.paths);
+  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude });
   const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
   process.stdout.write(json + '\n');
   const summary = cmd.analyzer.summarize(result);

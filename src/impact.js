@@ -636,10 +636,12 @@ export function gitChangedFiles(cwd, base) {
  * @param {string[]} [opts.changedFiles]  absolute paths (overrides --since)
  * @param {string}   [opts.cwd]           working dir for git (default: process.cwd)
  * @param {number}   [opts.maxDepth]      blast radius max depth (default: 6)
+ * @param {string[]} [opts.exclude]       project-root-relative directory paths to skip
  */
 export function analyzeProjects(projectRoots, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const maxDepth = opts.maxDepth ?? 6;
+  const exclude = opts.exclude;
 
   // 1. Resolve the change set.
   let changedFilesAbs = null;
@@ -655,13 +657,13 @@ export function analyzeProjects(projectRoots, opts = {}) {
   }
 
   // 2. Run every detector. Each returns its native result shape.
-  const webResult = webStorage.analyzeProjects(projectRoots);
-  const evtResult = events.analyzeProjects(projectRoots);
-  const glbResult = globals.analyzeProjects(projectRoots);
-  const stlResult = staleCapture.analyzeProjects(projectRoots);
-  const prsResult = pairedKeys.analyzeProjects(projectRoots);
-  const sdrResult = shapeDrift.analyzeProjects(projectRoots);
-  const svgResult = duplicateStaticSvgId.analyzeProjects(projectRoots);
+  const webResult = webStorage.analyzeProjects(projectRoots, { exclude });
+  const evtResult = events.analyzeProjects(projectRoots, { exclude });
+  const glbResult = globals.analyzeProjects(projectRoots, { exclude });
+  const stlResult = staleCapture.analyzeProjects(projectRoots, { exclude });
+  const prsResult = pairedKeys.analyzeProjects(projectRoots, { exclude });
+  const sdrResult = shapeDrift.analyzeProjects(projectRoots, { exclude });
+  const svgResult = duplicateStaticSvgId.analyzeProjects(projectRoots, { exclude });
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
   const projects = projectRoots.map(resolveProject);
@@ -688,7 +690,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // 5. Blast radius, if we have a change set.
   let blastRadius = null;
   if (changedFilesAbs && changedFilesAbs.size > 0) {
-    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth });
+    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude });
     blastRadius = graphResult.dependents.map((d) => ({
       file: d.file,
       project: projectIdFor(d.file, rootById),

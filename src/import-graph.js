@@ -195,15 +195,16 @@ export function resolveImport(spec, fromFile, aliasMap) {
  *
  * An edge target -> importer means "importer imports target."
  */
-export function buildReverseGraph(projectRoots) {
+export function buildReverseGraph(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
   const aliasesByProject = new Map(projects.map((p) => [p.id, loadAliases(p.root)]));
   const graph = new Map();
   const filesByProject = new Map(projects.map((p) => [p.id, new Set()]));
 
   for (const project of projects) {
     const { aliases } = aliasesByProject.get(project.id);
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       filesByProject.get(project.id).add(absFile);
       let src;
       try { src = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
@@ -251,8 +252,8 @@ export function findDependents(graph, changedFiles, maxDepth = 6) {
  * One-shot convenience: build graph and compute dependents for a change set.
  */
 export function analyzeProjects(projectRoots, changedFiles, opts = {}) {
-  const { maxDepth = 6 } = opts;
-  const { graph, filesByProject, projects } = buildReverseGraph(projectRoots);
+  const { maxDepth = 6, exclude } = opts;
+  const { graph, filesByProject, projects } = buildReverseGraph(projectRoots, { exclude });
   // Filter changedFiles to absolute paths that actually exist in one of the
   // indexed projects. This tolerates paths outside our scan scope gracefully.
   const knownFiles = new Set();

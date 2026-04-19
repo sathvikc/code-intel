@@ -226,12 +226,13 @@ function scriptKindFor(filePath) {
  * `host` does NOT split groups — `window.dispatchEvent('x')` in one file and
  * `globalThis.addEventListener('x')` in another refer to the same channel.
  */
-export function analyzeProjects(projectRoots) {
+export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
   const groups = new Map();
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root)) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
       let code;
       try {
         code = fs.readFileSync(absFile, 'utf8');

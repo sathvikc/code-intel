@@ -72,6 +72,66 @@ test('walkSourceFiles skips IGNORED_DIRS', () => {
   assert.deepEqual(files, [path.join('src', 'a.ts')]);
 });
 
+// ---------- walkSourceFiles: opts.exclude (Q14 / D11) ----------
+
+test('walkSourceFiles honors opts.exclude for a top-level directory', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'examples/b.ts', '');
+  write(root, 'docs/c.ts', '');
+  const files = [...walkSourceFiles(root, { exclude: ['examples'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('docs', 'c.ts'), path.join('src', 'a.ts')]);
+});
+
+test('walkSourceFiles honors opts.exclude for a nested directory', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'src/examples/b.ts', '');
+  write(root, 'examples/c.ts', '');
+  // Exclude only the nested one, not the top-level.
+  const files = [...walkSourceFiles(root, { exclude: ['src/examples'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('examples', 'c.ts'), path.join('src', 'a.ts')]);
+});
+
+test('walkSourceFiles honors multiple opts.exclude entries (and-ed)', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'examples/b.ts', '');
+  write(root, 'docs/c.ts', '');
+  write(root, 'e2e/d.ts', '');
+  const files = [...walkSourceFiles(root, { exclude: ['examples', 'docs', 'e2e'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'a.ts')]);
+});
+
+test('walkSourceFiles: opts.exclude does NOT let the user re-include IGNORED_DIRS', () => {
+  // node_modules stays hardcoded-excluded even if the user somehow tries to
+  // interact with it via --exclude (which would be a nonsensical invocation,
+  // but worth a regression guard).
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'node_modules/pkg/b.ts', '');
+  // Passing node_modules in exclude is a no-op because IGNORED_DIRS already
+  // excludes it; the test pins that the user can't accidentally *enable*
+  // scanning of it by any means of this flag.
+  const files = [...walkSourceFiles(root, { exclude: ['node_modules'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'a.ts')]);
+});
+
+test('walkSourceFiles: empty or missing opts.exclude is a no-op', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'examples/b.ts', '');
+  const baseline = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  const emptyOpts = [...walkSourceFiles(root, {})].map(f => path.relative(root, f)).sort();
+  const emptyExclude = [...walkSourceFiles(root, { exclude: [] })].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(emptyOpts, baseline);
+  assert.deepEqual(emptyExclude, baseline);
+});
+
 // ---------- exported constants ----------
 
 test('SOURCE_EXTENSIONS and IGNORED_DIRS are Sets with expected members', () => {

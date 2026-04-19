@@ -31,9 +31,16 @@ code-intel impact path/to/project --since main --markdown
 
 # Emit the unified JSON schema for an AI agent / CI pipeline to consume.
 code-intel impact path/to/project --since main --json
+
+# Skip specific directories under each project root (repeatable). Useful
+# when the repo root contains examples/, docs/, e2e/, or a sibling
+# package's build output you don't want in the report.
+code-intel impact . --exclude examples --exclude docs --markdown
 ```
 
 The `impact` command is designed to answer *"what did this change put at risk?"* — not *"list every pattern in this repo."* It runs every detector in one pass, annotates each finding with `touchesChange` when a change set is given, sorts change-touching findings first, and includes the transitive import-graph blast radius of the changed files. Every finding also carries a severity (blast-radius heuristic), a confidence level (`high` / `medium` / `low`) with a one-paragraph justification, and a stable fingerprint for dedup and tracking across runs.
+
+`--exclude <path>` works on `impact` and on every per-analyzer subcommand. Paths are literal, directory-level, and resolved against each project root; the hardcoded ignore set (`node_modules`, `dist`, `build`, `.git`, `coverage`, `.next`, `.turbo`, `.cache`) always applies on top and cannot be re-included. Globs are deferred to the forthcoming config format (see D11 for the scope, Q3 for the wider config track).
 
 Per-analyzer commands remain available when you want one signal in isolation.
 

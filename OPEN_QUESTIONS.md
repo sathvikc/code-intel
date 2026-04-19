@@ -324,49 +324,13 @@ only" structurally.
 
 ## Q14 — User-configurable directory excludes
 
-**Why it matters:** The walker's `IGNORED_DIRS` set is hardcoded —
-`node_modules`, `dist`, `build`, `.git`, `coverage`, `.next`, `.turbo`,
-`.cache`. Real repos routinely contain other trees the user doesn't
-want scanned: `examples/`, `docs/`, `e2e/`, `fixtures/`,
-`storybook-static/`, a sibling monorepo package's build output, etc.
-Without a way to exclude them, pointing `code-intel` at a repo root
-produces noise from directories the user never intended to analyze.
-
-Surfaced by dogfood on `code-intel` itself: `impact .` at the repo
-root returns 12 findings, all from `examples/app-*` (the deliberately-
-broken fixtures). That's correct behaviour *for this repo*, but it's
-the shape of noise every real user would hit on any repo with a
-`docs/` or `examples/` dir at root.
-
-**Working assumption:** None yet. Users who hit this either scope down
-to a subdir (`code-intel impact src`) or live with the fixture
-findings.
-
-**Needs:** Pick a flag shape. Minimum viable: `--exclude <glob>`
-accepting a repeatable glob, anded against the walker's directory
-traversal. Open sub-questions:
-
-- **Path shape.** Globs relative to each project root, or absolute?
-  Per-project relative is what tsconfig / eslint / biome all do —
-  least surprise.
-- **Interaction with config format (Q3).** Once a config file lands,
-  `exclude: []` is the obvious key. The CLI flag should behave as an
-  additive override, not a replacement, so config-declared excludes
-  survive one-off flag use.
-- **Granularity.** Directory-level excludes (`examples/`) are the
-  90% case and trivially cheap. File-level excludes
-  (`examples/**/*.tsx`) cost almost nothing extra if we use the same
-  glob matcher.
-- **Scope of defaults.** Should `IGNORED_DIRS` stay hardcoded as
-  "always excluded" (user can't re-include `node_modules` via a
-  flag), or be overridable? Default to "hardcoded, not overridable" —
-  a user who actually wants to scan `node_modules` is a fringe case
-  we can solve with an escape hatch later.
-- **Relationship to inline suppressions (Q5).** Directory excludes
-  filter at *ingestion*; inline suppressions filter at *emission*.
-  Both are legitimate and non-overlapping; this question is only the
-  ingestion side.
-
-Low-risk slice for a first cut: one CLI flag, directory-level,
-project-root-relative globs, hardcoded defaults stay as-is.
-Config-file surface follows later under Q3.
+**Resolved by D11.** `--exclude <path>` is now a repeatable CLI flag
+on `impact` and every per-analyzer subcommand. Each path is resolved
+project-root-relative; the walker prunes the subtree. `IGNORED_DIRS`
+stays hardcoded on top (user cannot re-include `node_modules`).
+Literal paths only in v1 — glob support is deferred to the Q3
+config-format track. Exposed programmatically as `opts.exclude` on
+every analyzer's `analyzeProjects` so downstream consumers (the
+planned MCP tool Q7, the planned `trace` subcommand Q12) can use the
+same knob. See D11 for the full scope, alternatives considered, and
+reasoning.
