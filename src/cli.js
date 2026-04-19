@@ -17,109 +17,22 @@
 // are grouped across them so cross-repo coupling surfaces the same way
 // in-project coupling does.
 
-import * as webStorage from './shared-state-web-storage.js';
-import * as events from './shared-state-events.js';
-import * as globals from './shared-state-globals.js';
-import * as staleCapture from './stale-module-capture.js';
-import * as pairedKeys from './paired-keys.js';
-import * as shapeDrift from './shape-drift.js';
-import * as duplicateStaticSvgId from './duplicate-static-svg-id.js';
 import * as impact from './impact.js';
 import * as trace from './trace.js';
 import { renderMarkdown } from './report-markdown.js';
+import { DETECTORS, DETECTOR_IDS } from './detectors/index.js';
 
-const ANALYZER_COMMANDS = {
-  'shared-state': {
-    analyzer: webStorage,
-    summarize: (s) => [
-      `code-intel / shared-state.web-storage`,
-      `projects:        ${s.projectCount}`,
-      `findings:        ${s.findingCount}`,
-      `  localStorage:  ${s.byStorage.localStorage ?? 0}`,
-      `  sessionStorage:${s.byStorage.sessionStorage ?? 0}`,
-      `cross-project:   ${s.crossProject}`,
-      `cross-file:      ${s.crossFile}`,
-      `dynamic keys:    ${s.dynamic}`,
-    ],
-  },
-  'shared-events': {
-    analyzer: events,
-    summarize: (s) => [
-      `code-intel / shared-state.events`,
-      `projects:        ${s.projectCount}`,
-      `findings:        ${s.findingCount}`,
-      `  dispatch:      ${s.byOp.dispatch ?? 0}`,
-      `  listen:        ${s.byOp.listen ?? 0}`,
-      `  unlisten:      ${s.byOp.unlisten ?? 0}`,
-      `cross-project:   ${s.crossProject}`,
-      `cross-file:      ${s.crossFile}`,
-      `dynamic channels:${s.dynamic}`,
-    ],
-  },
-  'shared-globals': {
-    analyzer: globals,
-    summarize: (s) => [
-      `code-intel / shared-state.globals`,
-      `projects:        ${s.projectCount}`,
-      `findings:        ${s.findingCount}`,
-      `  declare:       ${s.byOp.declare ?? 0}`,
-      `  assign:        ${s.byOp.assign ?? 0}`,
-      `  remove:        ${s.byOp.remove ?? 0}`,
-      `cross-project:   ${s.crossProject}`,
-      `cross-file:      ${s.crossFile}`,
-    ],
-  },
-  'stale-captures': {
-    analyzer: staleCapture,
-    summarize: (s) => [
-      `code-intel / stale-module-capture`,
-      `projects:           ${s.projectCount}`,
-      `findings:           ${s.findingCount}`,
-      `  direct-api:       ${s.byCapturedKind['direct-api'] ?? 0}`,
-      `  indirect-wrapper: ${s.byCapturedKind['indirect-wrapper'] ?? 0}`,
-      `auto-detected readers: ${s.detectedReaders}`,
-    ],
-  },
-  'paired-keys': {
-    analyzer: pairedKeys,
-    summarize: (s) => [
-      `code-intel / paired-keys`,
-      `projects:        ${s.projectCount}`,
-      `findings:        ${s.findingCount}`,
-      `  localStorage:  ${s.byStorage.localStorage ?? 0}`,
-      `  sessionStorage:${s.byStorage.sessionStorage ?? 0}`,
-      `keys (total):    ${s.totalKeys}`,
-      `keys (max/cluster): ${s.maxKeys}`,
-    ],
-  },
-  'shape-drift': {
-    analyzer: shapeDrift,
-    summarize: (s) => [
-      `code-intel / shape-drift`,
-      `projects:        ${s.projectCount}`,
-      `findings:        ${s.findingCount}`,
-      `  localStorage:  ${s.byStorage.localStorage ?? 0}`,
-      `  sessionStorage:${s.byStorage.sessionStorage ?? 0}`,
-      `  read-only drift:  ${s.withReadOnlyDrift}`,
-      `  write-only drift: ${s.withWriteOnlyDrift}`,
-      `  both sides drift: ${s.withBothDrift}`,
-    ],
-  },
-  'duplicate-static-svg-id': {
-    analyzer: duplicateStaticSvgId,
-    summarize: (s) => [
-      `code-intel / duplicate-static-svg-id`,
-      `projects:          ${s.projectCount}`,
-      `findings:          ${s.findingCount}`,
-      `  declarations:    ${s.totalDeclarations}`,
-      `  references:      ${s.totalReferences}`,
-      `  affected files:  ${s.affectedFiles}`,
-    ],
-  },
-};
+// Per-subcommand command table, derived from the detector registry. Each
+// entry wraps one detector for the per-analyzer CLI surface (`code-intel
+// shared-state`, `code-intel paired-keys`, ...). Adding a new detector is a
+// registry edit only — no change here.
+const ANALYZER_COMMANDS = Object.fromEntries(
+  DETECTORS.map((d) => [d.id, { analyzer: d.module, summarize: d.summarize }]),
+);
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--markdown|--json] [--pretty] [--exclude <path>]
+                             [--only <ids>] [--skip <ids>]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
                              [paths...] [--format json|mermaid] [--pretty] [--exclude <path>]
   code-intel shared-state    [paths...] [--pretty] [--exclude <path>]
@@ -190,6 +103,13 @@ Options:
                   --exclude examples/generated both work. Hardcoded ignores
                   (node_modules, dist, build, .git, coverage, .next, .turbo,
                   .cache) always apply on top and cannot be overridden.
+  --only <ids>    (impact only) comma-separated detector ids to run; other
+                  detectors are skipped entirely (not just filtered post-hoc).
+                  Repeatable. Unknown ids fail fast.
+  --skip <ids>    (impact only) comma-separated detector ids to skip. Applied
+                  after --only if both are given. Repeatable. Unknown ids
+                  fail fast.
+                  Known ids: ${DETECTOR_IDS.join(', ')}.
   -h, --help      Show this help.
 `;
 
@@ -211,6 +131,13 @@ function parseCommonArgs(argv) {
   return args;
 }
 
+// Split a --only / --skip value on commas, trim, drop empties. Allows
+// both `--only a,b` (one flag) and `--only a --only b` (two flags, which
+// we concatenate at the call site).
+function splitIdList(v) {
+  return v.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function parseImpactArgs(argv) {
   const args = {
     paths: [],
@@ -219,6 +146,8 @@ function parseImpactArgs(argv) {
     pretty: false,
     help: false,
     exclude: [],
+    only: [],
+    skip: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -231,6 +160,16 @@ function parseImpactArgs(argv) {
       const v = argv[++i];
       if (!v) throw new Error(`--exclude requires a value`);
       args.exclude.push(v);
+    }
+    else if (a === '--only') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--only requires a value (comma-separated detector ids)`);
+      args.only.push(...splitIdList(v));
+    }
+    else if (a === '--skip') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--skip requires a value (comma-separated detector ids)`);
+      args.skip.push(...splitIdList(v));
     }
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
@@ -256,7 +195,12 @@ async function runImpact(argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = impact.analyzeProjects(args.paths, { since: args.since, exclude: args.exclude });
+  const result = impact.analyzeProjects(args.paths, {
+    since: args.since,
+    exclude: args.exclude,
+    only: args.only.length > 0 ? args.only : undefined,
+    skip: args.skip.length > 0 ? args.skip : undefined,
+  });
 
   if (args.format === 'markdown') {
     process.stdout.write(renderMarkdown(result));

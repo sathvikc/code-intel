@@ -719,3 +719,126 @@ confidence, no fingerprint. Those live on findings (where there is
 a claim being made about a bug); `trace` makes no such claim, it
 just projects observations. A future schema bump would add them
 only if a caller needs them.
+
+---
+
+## D13 — Detector registry: single source of truth for orchestration
+
+**Status:** active
+**Related:** D11 (`--exclude`), D12 (`trace`), Q3 (config), Q7 (MCP)
+
+**Decision:** All detectors are now registered in a single module
+`src/detectors/index.js` as an array of entries:
+
+```js
+{
+  id: string,           // stable public id; CLI subcommand name; --only/--skip value
+  module: object,       // imported detector namespace (analyzeProjects + summarize)
+  findingKind: string,  // impact envelope's .kind label for wrapped findings
+  summarize: (s) => string[],  // per-subcommand CLI stderr lines
+}
+```
+
+`cli.js` derives its per-analyzer `ANALYZER_COMMANDS` table from the
+registry. `impact.js` loops over the registry (via `selectDetectors`)
+instead of hand-coding seven direct calls. `trace.js` intentionally
+keeps its three named imports because it is target-specific, not a
+generic orchestrator.
+
+Adding a new detector = one new entry in `DETECTORS`. No other edits
+to `cli.js`, `impact.js`, or any existing test — the wire-through is
+mechanical.
+
+**New user-visible capability: `--only <ids>` / `--skip <ids>` on
+`impact`.**
+
+```
+code-intel impact . --only shared-state,shared-events
+code-intel impact . --skip duplicate-static-svg-id
+```
+
+Both flags are repeatable (`--only a --only b`) and comma-tolerant
+(`--only a,b`); unknown ids fail fast with the known-ids list in the
+error. Filtering happens **before** detection — a skipped detector
+does not run at all — which makes this the cheapest available filter
+for users who know they only care about a subset of signals on a
+given run.
+
+**Scope of the v1 slice:**
+
+- **Registry carries static metadata only.** Detector-specific knobs
+  (tier hints, severity overrides, confidence thresholds) are not in
+  the registry; they remain inside each detector module. The registry
+  is an orchestration surface, not a configuration surface.
+- **`trace` stays direct.** `trace.js` imports the three detectors
+  it projects over by name. Putting the registry in front of `trace`
+  would add indirection without removing any coupling — `trace`
+  knows exactly which three it wants.
+- **Filters are detector-level only.** Post-emission filters (by
+  severity, by confidence, by project, by kind inside a detector's
+  output) remain out of scope for this slice. They depend on Q3 / Q5
+  which haven't landed.
+
+**Alternatives considered:**
+
+- **Auto-discover detectors via filesystem scan** (read
+  `src/*.js`, require any module that exports `analyzeProjects`).
+  Rejected: ~~clever~~ magical. Makes the detector list invisible
+  until the program runs; explicit registration is more greppable
+  and forces the `id` / `findingKind` contract to be stated
+  intentionally. The seven-entry ceremony is cheap.
+- **Class-based detector interface** (each detector is an instance of
+  a `Detector` class). Rejected: current detectors are pure function
+  modules with no identity across calls. Introducing a class
+  hierarchy would force every analyzer to change its public shape
+  without unlocking anything the namespace-of-functions pattern
+  can't already do. Classes become worth it when detector instances
+  need per-instance state (e.g. a preloaded AST cache). Until then,
+  the namespace module *is* the interface.
+- **Ship `--only` / `--skip` but defer the registry.** Rejected: the
+  flag implementation would have to live in `cli.js` and `impact.js`
+  as a hardcoded list of ids mirroring the imports — exactly the
+  duplication the registry is fixing. Shipping the flag and the
+  registry together keeps them consistent from day one.
+- **Inline comma-splitting on `--exclude` too, for consistency.**
+  Deferred. `--exclude` was shipped as "repeatable flag, one value
+  each" (D11) and there is no user pain with that shape yet. If the
+  next common-opt addition (say `--severity`) also wants
+  comma-tolerance, we'll refactor `splitIdList` into a shared helper
+  and apply it uniformly; until then, gratuitous consistency changes
+  risk breaking existing invocations.
+
+**Alignment with upcoming work:**
+
+- **Q3 (config file).** The config's `detectors.enabled: [...]` key
+  will land as another input to `selectDetectors` — the same filter
+  pipeline, with CLI flags as additive overrides on top of config.
+  The registry is the natural anchor; the shape won't change when
+  config lands.
+- **Q7 (MCP surface).** MCP tools that want to run a subset of
+  detectors (e.g. *"just check cross-project storage coupling"*) now
+  have a clean knob to expose. `whoReadsKey` can keep using `trace`;
+  `impact` analogues can use `{ only: [...] }` directly.
+- **Plugin / rule-pack architecture (`BACKLOG.md`).** Plugins become a
+  way to append entries to `DETECTORS` from a user-declared module.
+  D13 does not ship the plugin surface — that depends on Q3 + Q5 +
+  Q9 per the backlog gating — but the attach point is now obvious.
+
+**Reasoning:** The project hit the inflection where the implicit
+detector interface (every module exports `analyzeProjects` +
+`summarize`; `cli.js` hand-maintains a table mirroring them;
+`impact.js` hand-codes seven parallel calls) started costing real
+time on common-opt additions: D11's `--exclude` took a seven-file
+sweep that would have been a one-line registry edit if D13 had
+shipped first. The registry is a pure refactor — behavior-identical
+full-runs are pinned by a regression test — that eliminates that
+sweep for every future common opt, and pays for itself immediately
+by unlocking `--only` / `--skip` as a 15-line flag addition instead
+of a seven-detector change.
+
+Broader filtering (severity, confidence, kind-level) is deliberately
+deferred: the shape depends on Q3 / Q5, and premature pipelining
+would lock us into guesses about their shape. The registry is the
+smallest abstraction that serves concrete current pain without
+guessing at future pain — consistent with D2 (ship partial, iterate)
+and D3 (don't abstract ahead of real pressure).

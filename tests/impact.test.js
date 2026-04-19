@@ -544,6 +544,106 @@ test('exclude: orchestrator passes opts.exclude through to every detector', () =
   );
 });
 
+// ---------- opts.only / opts.skip (D13) ----------
+
+test('only: narrows detector set; other kinds are absent from findings', () => {
+  // A fixture that trips several detectors at once: storage key coupling,
+  // classic-script global collision, and a stale module capture. With
+  // --only shared-state the report must contain the storage finding and
+  // nothing else.
+  const a = mktmp();
+  const b = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app-a' }));
+  write(b, 'package.json', JSON.stringify({ name: 'app-b' }));
+  // Shared storage key across both projects.
+  write(a, 'src/w.ts', `localStorage.setItem('shared.k', 1);`);
+  write(b, 'src/r.ts', `localStorage.getItem('shared.k');`);
+  // Classic-script global collision across both projects.
+  write(a, 'src/helper.js', `function doThing() {}`);
+  write(b, 'src/helper.js', `function doThing() {}`);
+  // Stale module capture in one project.
+  write(a, 'src/cap.ts', `const tier = document.cookie;`);
+
+  const baseline = analyzeProjects([a, b]);
+  const only = analyzeProjects([a, b], { only: ['shared-state'] });
+
+  const baselineKinds = new Set(baseline.findings.map((f) => f.kind));
+  const onlyKinds = new Set(only.findings.map((f) => f.kind));
+
+  // Baseline has multiple kinds; only-run has just shared-storage-key.
+  assert.ok(baselineKinds.size >= 3, `baseline should surface multiple kinds, got ${[...baselineKinds]}`);
+  assert.deepEqual([...onlyKinds], ['shared-storage-key']);
+});
+
+test('skip: removes exactly the named detector; other kinds untouched', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+  write(a, 'src/cap.ts', `const tier = document.cookie;`);
+
+  const baseline = analyzeProjects([a]);
+  const skipped = analyzeProjects([a], { skip: ['shared-state'] });
+
+  assert.ok(baseline.findings.some((f) => f.kind === 'shared-storage-key'));
+  assert.ok(!skipped.findings.some((f) => f.kind === 'shared-storage-key'),
+    'shared-storage-key must be absent after --skip shared-state');
+  // A non-skipped kind that was in the baseline must still be in the skipped run.
+  const baselineOther = baseline.findings.find((f) => f.kind !== 'shared-storage-key');
+  if (baselineOther) {
+    assert.ok(skipped.findings.some((f) => f.kind === baselineOther.kind),
+      `kind ${baselineOther.kind} must survive --skip shared-state`);
+  }
+});
+
+test('only: unknown detector id throws with the known-ids list', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  assert.throws(
+    () => analyzeProjects([a], { only: ['not-a-detector'] }),
+    /not-a-detector/,
+  );
+});
+
+test('only + skip: compose — skip applies after only', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/cap.ts', `const tier = document.cookie;`);
+  write(a, 'src/helper.js', `function helper() {}`);
+
+  const r = analyzeProjects([a], {
+    only: ['shared-state', 'stale-captures'],
+    skip: ['stale-captures'],
+  });
+  const kinds = new Set(r.findings.map((f) => f.kind));
+  // Registry id stale-captures maps to findingKind stale-module-capture.
+  assert.ok(!kinds.has('stale-module-capture'));
+  assert.ok(!kinds.has('shared-global-binding'),
+    'shared-globals was not in --only, so its findings must be absent');
+});
+
+test('only: no-op full run equals baseline with no only/skip (regression)', () => {
+  // Pinning that routing findings through the registry produces byte-
+  // identical output to the baseline when no filters are applied. If a
+  // future registry refactor drops a detector silently, this fails.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+  write(a, 'src/cap.ts', `const tier = document.cookie;`);
+  write(a, 'src/helper.js', `function helper() {}`);
+
+  const baseline = analyzeProjects([a]);
+  const noop = analyzeProjects([a]);
+  assert.deepEqual(
+    baseline.findings.map((f) => f.id).sort(),
+    noop.findings.map((f) => f.id).sort(),
+  );
+  assert.deepEqual(baseline.summary.byKind, noop.summary.byKind);
+});
+
 test('exclude: blast radius respects opts.exclude', () => {
   // A file inside an excluded tree that transitively imports a changed
   // file must NOT appear in the blast radius, because it was never

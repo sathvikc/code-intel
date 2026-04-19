@@ -62,15 +62,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import * as webStorage from './shared-state-web-storage.js';
-import * as events from './shared-state-events.js';
-import * as globals from './shared-state-globals.js';
-import * as staleCapture from './stale-module-capture.js';
-import * as pairedKeys from './paired-keys.js';
-import * as shapeDrift from './shape-drift.js';
-import * as duplicateStaticSvgId from './duplicate-static-svg-id.js';
 import * as importGraph from './import-graph.js';
 import { resolveProject } from './project.js';
+import { selectDetectors } from './detectors/index.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'impact';
@@ -637,11 +631,17 @@ export function gitChangedFiles(cwd, base) {
  * @param {string}   [opts.cwd]           working dir for git (default: process.cwd)
  * @param {number}   [opts.maxDepth]      blast radius max depth (default: 6)
  * @param {string[]} [opts.exclude]       project-root-relative directory paths to skip
+ * @param {string[]} [opts.only]          detector ids to run; if given, others are skipped
+ * @param {string[]} [opts.skip]          detector ids to skip; applied after `only`
  */
 export function analyzeProjects(projectRoots, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const maxDepth = opts.maxDepth ?? 6;
   const exclude = opts.exclude;
+  // Registry-driven detector selection. Unknown ids in `only`/`skip` throw
+  // from selectDetectors — we let that propagate so a typo surfaces at the
+  // CLI boundary rather than quietly producing an empty-but-valid report.
+  const detectors = selectDetectors({ only: opts.only, skip: opts.skip });
 
   // 1. Resolve the change set.
   let changedFilesAbs = null;
@@ -656,28 +656,28 @@ export function analyzeProjects(projectRoots, opts = {}) {
     if (gitInfo.available) changedFilesAbs = new Set(gitInfo.changedFiles);
   }
 
-  // 2. Run every detector. Each returns its native result shape.
-  const webResult = webStorage.analyzeProjects(projectRoots, { exclude });
-  const evtResult = events.analyzeProjects(projectRoots, { exclude });
-  const glbResult = globals.analyzeProjects(projectRoots, { exclude });
-  const stlResult = staleCapture.analyzeProjects(projectRoots, { exclude });
-  const prsResult = pairedKeys.analyzeProjects(projectRoots, { exclude });
-  const sdrResult = shapeDrift.analyzeProjects(projectRoots, { exclude });
-  const svgResult = duplicateStaticSvgId.analyzeProjects(projectRoots, { exclude });
+  // 2. Run every selected detector. Each returns its native result shape;
+  //    we keep the result paired with its registry entry so step 3 can look
+  //    up the right `findingKind` wrapper label without a second map.
+  const detectorResults = detectors.map((d) => ({
+    detector: d,
+    result: d.module.analyzeProjects(projectRoots, { exclude }),
+  }));
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
   const projects = projectRoots.map(resolveProject);
   const rootById = new Map(projects.map((p) => [p.id, p.root]));
 
-  // 3. Wrap each finding into the unified envelope.
+  // 3. Wrap each finding into the unified envelope, using the registry's
+  //    declared `findingKind` as the kind label. Registry order is
+  //    preserved, which keeps sort-stable behavior identical to the
+  //    pre-registry hand-coded order.
   const wrapped = [];
-  for (const f of webResult.findings) wrapped.push(wrap('shared-storage-key', f, rootById, changedFilesAbs));
-  for (const f of evtResult.findings) wrapped.push(wrap('shared-event-channel', f, rootById, changedFilesAbs));
-  for (const f of glbResult.findings) wrapped.push(wrap('shared-global-binding', f, rootById, changedFilesAbs));
-  for (const f of stlResult.findings) wrapped.push(wrap('stale-module-capture', f, rootById, changedFilesAbs));
-  for (const f of prsResult.findings) wrapped.push(wrap('paired-keys', f, rootById, changedFilesAbs));
-  for (const f of sdrResult.findings) wrapped.push(wrap('shape-drift', f, rootById, changedFilesAbs));
-  for (const f of svgResult.findings) wrapped.push(wrap('duplicate-static-svg-id', f, rootById, changedFilesAbs));
+  for (const { detector, result } of detectorResults) {
+    for (const f of result.findings) {
+      wrapped.push(wrap(detector.findingKind, f, rootById, changedFilesAbs));
+    }
+  }
 
   // 4. Sort: change-touching first, then severity, then stable by id.
   const SEV_ORDER = { critical: 0, warning: 1, info: 2 };

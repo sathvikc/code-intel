@@ -36,11 +36,18 @@ code-intel impact path/to/project --since main --json
 # when the repo root contains examples/, docs/, e2e/, or a sibling
 # package's build output you don't want in the report.
 code-intel impact . --exclude examples --exclude docs --markdown
+
+# Run only a subset of detectors. Skipped detectors are not executed
+# at all, so this is the cheapest available filter.
+code-intel impact . --only shared-state,shared-events
+code-intel impact . --skip duplicate-static-svg-id
 ```
 
 The `impact` command is designed to answer *"what did this change put at risk?"* — not *"list every pattern in this repo."* It runs every detector in one pass, annotates each finding with `touchesChange` when a change set is given, sorts change-touching findings first, and includes the transitive import-graph blast radius of the changed files. Every finding also carries a severity (blast-radius heuristic), a confidence level (`high` / `medium` / `low`) with a one-paragraph justification, and a stable fingerprint for dedup and tracking across runs.
 
 `--exclude <path>` works on `impact` and on every per-analyzer subcommand. Paths are literal, directory-level, and resolved against each project root; the hardcoded ignore set (`node_modules`, `dist`, `build`, `.git`, `coverage`, `.next`, `.turbo`, `.cache`) always applies on top and cannot be re-included. Globs are deferred to the forthcoming config format (see D11 for the scope, Q3 for the wider config track).
+
+`--only <ids>` and `--skip <ids>` (both repeatable, both comma-tolerant) filter the detector set on `impact`. Unlike post-emission filters, they prevent the skipped detectors from running at all — so `impact --only shared-state` on a large repo pays only the storage-key scan cost. Known ids: `shared-state`, `shared-events`, `shared-globals`, `stale-captures`, `paired-keys`, `shape-drift`, `duplicate-static-svg-id`. Unknown ids fail fast with the full list. See D13 for the registry design.
 
 Per-analyzer commands remain available when you want one signal in isolation.
 
