@@ -65,21 +65,8 @@
 import ts from 'typescript';
 import fs from 'node:fs';
 import { walkSourceFiles } from './project.js';
+import { readSource, scriptKindFor } from './framework-file.js';
 import { loadAliases, resolveImport } from './import-graph.js';
-
-/**
- * ScriptKind helper, kept local to avoid an import cycle with the
- * detectors.
- */
-function scriptKindFor(filePath) {
-  if (filePath.endsWith('.tsx')) return ts.ScriptKind.TSX;
-  if (filePath.endsWith('.ts')) return ts.ScriptKind.TS;
-  if (filePath.endsWith('.jsx')) return ts.ScriptKind.JSX;
-  if (filePath.endsWith('.mjs') || filePath.endsWith('.cjs') || filePath.endsWith('.js')) {
-    return ts.ScriptKind.JS;
-  }
-  return ts.ScriptKind.Unknown;
-}
 
 // ---------------------------------------------------------------------------
 // Per-file collectors
@@ -276,7 +263,7 @@ export function buildConstantsIndex(projects, opts = {}) {
         sourceFile = cached.sourceFile;
       } else {
         let code;
-        try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+        try { code = readSource(absFile); } catch { continue; }
         try {
           sourceFile = ts.createSourceFile(
             absFile,

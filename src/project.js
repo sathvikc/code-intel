@@ -13,6 +13,10 @@ import path from 'node:path';
 
 export const SOURCE_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
+  // Framework files. Parsed via a pre-extraction step in `ast-cache.js`
+  // (`src/framework-file.js`); the extractor lifts the JS/TS regions out
+  // of the surrounding markup so the TS parser can read them.
+  '.astro',
 ]);
 
 export const IGNORED_DIRS = new Set([

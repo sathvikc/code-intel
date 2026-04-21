@@ -80,6 +80,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { readSource, scriptKindFor } from './framework-file.js';
 import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 import { buildReverseGraph, loadAliases, resolveImport } from './import-graph.js';
 
@@ -180,7 +181,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
         code = cached.code;
         preparsed = cached.sourceFile;
       } else {
-        try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+        try { code = readSource(absFile); } catch { continue; }
       }
       let obs;
       try { obs = analyzeSource(code, absFile, preparsed); } catch { continue; }
@@ -796,15 +797,4 @@ function locOf(node, sf) {
 }
 function snippetOf(node, sf) {
   return node.getText(sf).split('\n')[0].slice(0, 200);
-}
-function scriptKindFor(filePath) {
-  switch (path.extname(filePath)) {
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.jsx': return ts.ScriptKind.JSX;
-    case '.mjs':
-    case '.cjs':
-    case '.js': return ts.ScriptKind.JS;
-    default: return ts.ScriptKind.Unknown;
-  }
 }

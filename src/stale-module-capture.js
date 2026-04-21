@@ -45,6 +45,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { readSource, scriptKindFor } from './framework-file.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'stale-module-capture';
@@ -218,18 +219,6 @@ function captureReason(init, readerNames) {
   return reason;
 }
 
-function scriptKindFor(filePath) {
-  switch (path.extname(filePath)) {
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.jsx': return ts.ScriptKind.JSX;
-    case '.mjs':
-    case '.cjs':
-    case '.js': return ts.ScriptKind.JS;
-    default: return ts.ScriptKind.Unknown;
-  }
-}
-
 /**
  * Parse a single file. Returns the source file plus raw readers/captures
  * for testing. Note: captures found here only know about readers from
@@ -264,7 +253,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
         sf = cached.sourceFile;
       } else {
         let code;
-        try { code = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+        try { code = readSource(absFile); } catch { continue; }
         try {
           sf = ts.createSourceFile(absFile, code, ts.ScriptTarget.Latest, true, scriptKindFor(absFile));
         } catch { continue; }

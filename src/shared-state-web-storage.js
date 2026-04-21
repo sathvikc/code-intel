@@ -14,6 +14,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
+import { readSource, scriptKindFor } from './framework-file.js';
 import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
@@ -203,18 +204,6 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   return occurrences;
 }
 
-function scriptKindFor(filePath) {
-  switch (path.extname(filePath)) {
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.jsx': return ts.ScriptKind.JSX;
-    case '.mjs':
-    case '.cjs':
-    case '.js': return ts.ScriptKind.JS;
-    default: return ts.ScriptKind.Unknown;
-  }
-}
-
 /**
  * Run the analyzer across N project roots and return the schema-shaped result.
  */
@@ -238,7 +227,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
         preparsed = cached.sourceFile;
       } else {
         try {
-          code = fs.readFileSync(absFile, 'utf8');
+          code = readSource(absFile);
         } catch {
           continue;
         }

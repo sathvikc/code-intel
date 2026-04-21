@@ -28,14 +28,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
-function scriptKindFor(filePath) {
-  switch (path.extname(filePath)) {
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.jsx': return ts.ScriptKind.JSX;
-    default: return ts.ScriptKind.JS;
-  }
-}
+import {
+  isFrameworkFile,
+  extractFrameworkFile,
+  scriptKindFor,
+} from './framework-file.js';
 
 /**
  * @typedef {{ code: string, sourceFile: import('typescript').SourceFile }} CacheEntry
@@ -74,14 +71,20 @@ export function createAstCache() {
         return store.get(absPath);
       }
       misses++;
-      let code;
+      let raw;
       try {
-        code = fs.readFileSync(absPath, 'utf8');
+        raw = fs.readFileSync(absPath, 'utf8');
       } catch {
         readErrors++;
         store.set(absPath, null);
         return null;
       }
+      // For framework files (.astro etc.), lift the JS/TS regions out of
+      // the surrounding markup before parsing. The extractor is
+      // byte-for-byte positional — line/column numbers and AST offsets
+      // still map back to the same locations in the original file, so
+      // detector snippets and diagnostics remain meaningful.
+      const code = isFrameworkFile(absPath) ? extractFrameworkFile(absPath, raw) : raw;
       let sf;
       try {
         sf = ts.createSourceFile(

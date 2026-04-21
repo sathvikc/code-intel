@@ -28,6 +28,7 @@ import ts from 'typescript';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles, SOURCE_EXTENSIONS } from './project.js';
+import { readSource, scriptKindFor } from './framework-file.js';
 
 export const SCHEMA_VERSION = '0.1';
 
@@ -81,18 +82,6 @@ export function loadAliases(projectRoot) {
 }
 
 // ---------- import extraction (AST) ----------
-
-function scriptKindFor(filePath) {
-  switch (path.extname(filePath)) {
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.jsx': return ts.ScriptKind.JSX;
-    case '.mjs':
-    case '.cjs':
-    case '.js': return ts.ScriptKind.JS;
-    default: return ts.ScriptKind.Unknown;
-  }
-}
 
 /**
  * Extract every import specifier from a source file's AST.
@@ -215,7 +204,7 @@ export function buildReverseGraph(projectRoots, opts = {}) {
         src = cached.code;
         preparsed = cached.sourceFile;
       } else {
-        try { src = fs.readFileSync(absFile, 'utf8'); } catch { continue; }
+        try { src = readSource(absFile); } catch { continue; }
       }
       let specs;
       try { specs = extractImportSpecifiers(src, absFile, preparsed); } catch { continue; }
