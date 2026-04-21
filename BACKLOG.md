@@ -28,10 +28,24 @@ Planned:
 - [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
-- [ ] `shape-drift` v2 — broaden channels (cookies, CustomEvent detail, URL params) and resolve cross-function / wrapper-module / constant-folded shapes so the SSR-inline-script opaque-writer case (P4) lights up
+- [ ] `shape-drift` v2 — broaden channels (cookies, CustomEvent detail, URL params), follow single-hop alias chains on reads (`const raw = storage.getItem(K); JSON.parse(raw)`), and resolve cross-function / wrapper-module / constant-folded shapes so the SSR-inline-script opaque-writer case (P4) lights up
 - [ ] `paired-keys` v2 — cross-cluster correlation: flag other writers that touch only one key of a known pair elsewhere in the codebase (v1 emits the intra-cluster finding only; see P10)
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 - [ ] `hydration-unsafe-read` — component render path reads a browser-only global, time-varying primitive, or client-only state in a file reachable from a server-rendered entry (P11; **unvalidated** — surfaced via web research, not a lived incident; see P11 Source for evidence trail; detector likely depends on framework-context config)
+- [ ] `shared-events` v2 — alias-follow for `dispatchEvent(var)` paired with same-scope `const X = new CustomEvent('lit', ...)` (P22; shared alias infrastructure with `shape-drift` v2)
+- [ ] `shared-events` v2 — orphan-channel sub-finding (writer-only / listener-only channels, info severity)
+- [ ] `event-bridge` — listener whose handler re-dispatches the same channel to a different host; emits a new `bridge` occurrence kind (P23; depends on `shared-events` v2 alias-follow)
+- [ ] `element-scoped-listener` — low-confidence listeners on non-`window` hosts, candidate-linked to same-channel window listeners (P24; ships after `event-bridge`)
+- [ ] `structural-drift` — loose-typed cross-file object property drift without a serialization boundary (P12; reuses `shape-drift` AST machinery)
+- [ ] `lifecycle-cleanup-drift` — missing `removeEventListener` / `clearInterval` / observer `.disconnect()` / `AbortController.abort()` in paired register/teardown sites (P13)
+- [ ] `side-effect-at-import` — module-top-level writes / fetches / timers / DOM mutations (P14; reuses `stale-captures` walker)
+- [ ] `shared-request-state` — mutable module-scope state reachable from request-handler entry points; SSR multi-tenancy leak (P15; depends on framework-context config / Q3)
+- [ ] `discriminated-union-drift` — string-literal union extended without updating exhaustive switch/if consumers (P16; feasibility of syntactic-only resolution still open)
+- [ ] `stateful-shared-regex` — module/class-scope `/g` or `/y` regex used with `.test()` / `.exec()` across ≥2 call sites (P17)
+- [ ] `env-var-drift` — `process.env.*` / `import.meta.env.*` references vs `.env.example` / `zod` / `envsafe` schema declarations (P19)
+- [ ] `storage-clear-cascade` — `localStorage.clear()` / `sessionStorage.clear()` that would wipe keys owned by other files (P20; piggybacks on `shared-state`)
+- [ ] `lost-this-callback` — method reference passed as a callback whose body reads `this` without bind/arrow (P21)
+- [ ] `stale-captures` catalogue extension — browser-only APIs (`navigator.*`, `matchMedia`, `IntersectionObserver`, `indexedDB`, etc.) with critical-tier escalation when reached from an SSR entry (P18; depends on framework-context config / Q3)
 
 ## Infrastructure
 
@@ -46,6 +60,13 @@ Planned:
 - [ ] Cross-run content-hash AST cache on disk (watch-mode / CI warm-start; orthogonal to D14)
 - [ ] Nx integration — `npx nx show projects --affected` overlay on blast radius
 - [ ] Risk score (0–100) per finding and per report
+- [ ] Glob-aware `--exclude` — support `**/__tests__` / `**/*.spec.*` patterns (currently literal-path only)
+- [ ] Compare mode (`--baseline <prior.json>`) — fingerprint-keyed set-difference between two runs; emits `diff.new` / `diff.resolved` / `diff.unchanged`
+- [ ] Framework-file parsing — `.astro` (frontmatter + inline `<script>` blocks, line-preserved); generalise to `.vue` / `.svelte` in a shared framework-file extractor
+- [ ] Populate `graph` field in `impact --json` output (currently only rendered in markdown); MCP-consumer prep
+- [ ] `--since` soft warning on huge diffs (cap changed-files list in markdown; warn when >50)
+- [ ] `trace --layout star|flow|grouped` — writers / hub / readers split with file-group subgraphs; default `grouped` for N > 5
+- [ ] Test-context-aware confidence scoring — weight production occurrences higher than test occurrences; depends on glob `--exclude` above or framework-context config (see Q3)
 
 ## Orchestration (commodity tools)
 
