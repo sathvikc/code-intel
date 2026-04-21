@@ -244,13 +244,12 @@ test('message: dynamic event channel renders as (dynamic: <expr>), not null', ()
 });
 
 test('message: dynamic with no key and no expression still renders (dynamic)', () => {
-  // Defense-in-depth: `dispatchEvent(e)` where `e` is a bound variable
-  // produces dynamic=true but the analyzer's expression text is the
-  // variable name. Even if we had an edge case where expression were
-  // empty, the message must not leak `'null'`.
+  // Defense-in-depth: `dispatchEvent(e)` where `e` is a function parameter
+  // produces dynamic=true because the alias-follow can't resolve parameters.
+  // The message must not leak `'null'` even if the expression were empty.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/x.ts', `const e = new CustomEvent('x'); window.dispatchEvent(e);`);
+  write(a, 'src/x.ts', `function fwd(e) { window.dispatchEvent(e); }`);
   const r = analyzeProjects([a]);
   const f = r.findings.find((x) => x.kind === 'shared-event-channel' && x.detail.dynamic);
   assert.ok(f);

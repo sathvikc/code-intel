@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
 import { readSource, scriptKindFor } from './framework-file.js';
-import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
+import { buildFoldMap, resolveStringArg, resolveSameScopeBinding } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'shared-state.events';
@@ -107,23 +107,94 @@ function extractChannelFromListenerArg(argNode, sourceFile, foldMap, crossFileRe
   return extractStringOrDynamic(argNode, sourceFile, foldMap, crossFileResolver);
 }
 
-function extractChannelFromDispatchArg(argNode, sourceFile, foldMap, crossFileResolver) {
-  if (!argNode) return { name: null, dynamic: true, expressionText: '', foldedFrom: null };
-  // `new CustomEvent('foo', …)` or `new Event('foo', …)`
-  if (ts.isNewExpression(argNode)) {
-    const ctor = argNode.expression;
-    const ctorName =
-      ts.isIdentifier(ctor) ? ctor.text :
-      (ts.isPropertyAccessExpression(ctor) && ts.isIdentifier(ctor.name)) ? ctor.name.text :
-      null;
-    if (ctorName === 'CustomEvent' || ctorName === 'Event') {
-      const nameArg = argNode.arguments?.[0];
-      if (nameArg) return extractStringOrDynamic(nameArg, sourceFile, foldMap, crossFileResolver);
-      return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
+/**
+ * Extract the channel(s) from the first argument of a dispatch call.
+ *
+ * Returns an array because one call can legitimately dispatch on more
+ * than one channel when the argument is an aliased event whose init is
+ * a ternary (`const fwd = cond ? new CustomEvent('A') : new Event('B');
+ * dispatch(fwd)` → channels `['A', 'B']`). Most calls return a single-
+ * element array. The multi-channel path is opt-in: it only fires when
+ * the argument is a same-scope non-reassigned alias.
+ *
+ * Recognised shapes:
+ *   - `dispatch(new CustomEvent('X', ...))`            inline (existing)
+ *   - `dispatch(new Event('X', ...))`                  inline (existing)
+ *   - `const fwd = new CustomEvent('X'); dispatch(fwd)` alias     (P22)
+ *   - `const fwd = cond ? new CustomEvent('A') :       alias + ternary
+ *      new Event('B'); dispatch(fwd)`                              (P22)
+ *
+ * Each element carries `aliasedFrom` when alias-follow fired; absent
+ * on inline dispatches. `foldedFrom` / `foldedFromModule` continue to
+ * flag string-identifier-vs-literal folding on the channel name.
+ */
+function extractDispatchChannels(argNode, sourceFile, foldMap, crossFileResolver) {
+  if (!argNode) {
+    return [{ name: null, dynamic: true, expressionText: '', foldedFrom: null }];
+  }
+  // Inline: `new CustomEvent('foo', …)` or `new Event('foo', …)`
+  const inline = channelFromConstructor(argNode, sourceFile, foldMap, crossFileResolver);
+  if (inline) return [inline];
+  // Alias follow: `dispatch(x)` where `x` is a same-scope const/let.
+  if (ts.isIdentifier(argNode)) {
+    const aliased = resolveSameScopeBinding(argNode, foldMap);
+    if (aliased) {
+      const channels = channelsFromAliasInit(aliased.init, sourceFile, foldMap, crossFileResolver);
+      if (channels && channels.length > 0) {
+        return channels.map((c) => ({ ...c, aliasedFrom: aliased.name }));
+      }
     }
   }
-  // Fallback: unknown dispatch argument (variable, already-constructed event, etc.)
-  return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
+  // Fallback: dynamic — unknown event, cross-function construction, etc.
+  return [{
+    name: null,
+    dynamic: true,
+    expressionText: argNode.getText(sourceFile),
+    foldedFrom: null,
+  }];
+}
+
+/**
+ * If `argNode` is `new CustomEvent(lit, …)` or `new Event(lit, …)`,
+ * return the channel descriptor; else null. Shared between the inline
+ * dispatch path and the alias-follow path so both see the same
+ * recognised constructor set.
+ */
+function channelFromConstructor(argNode, sourceFile, foldMap, crossFileResolver) {
+  if (!ts.isNewExpression(argNode)) return null;
+  const ctor = argNode.expression;
+  const ctorName =
+    ts.isIdentifier(ctor) ? ctor.text :
+    (ts.isPropertyAccessExpression(ctor) && ts.isIdentifier(ctor.name)) ? ctor.name.text :
+    null;
+  if (ctorName !== 'CustomEvent' && ctorName !== 'Event') return null;
+  const nameArg = argNode.arguments?.[0];
+  if (!nameArg) {
+    return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
+  }
+  return extractStringOrDynamic(nameArg, sourceFile, foldMap, crossFileResolver);
+}
+
+/**
+ * Recursively flatten an alias's initializer into one or more channel
+ * descriptors. Handles the v1 alias-follow shapes: direct constructor,
+ * a ternary of two constructors, and parens wrapping either of the
+ * above. Returns null (not an empty array) when nothing is
+ * extractable, so the caller can distinguish "no alias-recognised
+ * channels" from "alias recognised but gave zero channels".
+ */
+function channelsFromAliasInit(initNode, sourceFile, foldMap, crossFileResolver) {
+  if (ts.isParenthesizedExpression(initNode)) {
+    return channelsFromAliasInit(initNode.expression, sourceFile, foldMap, crossFileResolver);
+  }
+  if (ts.isConditionalExpression(initNode)) {
+    const whenTrue = channelsFromAliasInit(initNode.whenTrue, sourceFile, foldMap, crossFileResolver) ?? [];
+    const whenFalse = channelsFromAliasInit(initNode.whenFalse, sourceFile, foldMap, crossFileResolver) ?? [];
+    const combined = [...whenTrue, ...whenFalse];
+    return combined.length > 0 ? combined : null;
+  }
+  const direct = channelFromConstructor(initNode, sourceFile, foldMap, crossFileResolver);
+  return direct ? [direct] : null;
 }
 
 function extractStringOrDynamic(node, sourceFile, foldMap, crossFileResolver) {
@@ -150,23 +221,30 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const foldMap = buildFoldMap(sourceFile);
   const occurrences = [];
 
-  function record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule) {
+  function record(node, host, ch, op, detectedVia) {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
     const occ = {
       host,
-      name,
-      dynamic,
-      expressionText,
+      name: ch.name,
+      dynamic: ch.dynamic,
+      expressionText: ch.expressionText,
       op,
       detectedVia,
-      foldedFrom: foldedFrom ?? null,
+      foldedFrom: ch.foldedFrom ?? null,
       line: line + 1,
       column: character + 1,
       snippet,
     };
-    if (foldedFromModule) occ.foldedFromModule = foldedFromModule;
+    if (ch.foldedFromModule) occ.foldedFromModule = ch.foldedFromModule;
+    if (ch.aliasedFrom) occ.aliasedFrom = ch.aliasedFrom;
     occurrences.push(occ);
+  }
+
+  function emitChannels(node, host, op, detectedVia, channels) {
+    for (const ch of channels) {
+      record(node, host, ch, op, detectedVia);
+    }
   }
 
   function visit(node) {
@@ -181,11 +259,10 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
           const host = globalHostOf(callee.expression);
           if (host) {
             const detectedVia = op === 'dispatch' ? 'custom-event' : 'event-listener';
-            const { name, dynamic, expressionText, foldedFrom, foldedFromModule } =
-              op === 'dispatch'
-                ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap, crossFileResolver)
-                : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap, crossFileResolver);
-            record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule);
+            const channels = op === 'dispatch'
+              ? extractDispatchChannels(node.arguments[0], sourceFile, foldMap, crossFileResolver)
+              : [extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap, crossFileResolver)];
+            emitChannels(node, host, op, detectedVia, channels);
           }
         }
       }
@@ -198,11 +275,10 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
         const op = METHOD_OPS[callee.text];
         if (op) {
           const detectedVia = op === 'dispatch' ? 'custom-event' : 'event-listener';
-          const { name, dynamic, expressionText, foldedFrom, foldedFromModule } =
-            op === 'dispatch'
-              ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap, crossFileResolver)
-              : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap, crossFileResolver);
-          record(node, 'window', name, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule);
+          const channels = op === 'dispatch'
+            ? extractDispatchChannels(node.arguments[0], sourceFile, foldMap, crossFileResolver)
+            : [extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap, crossFileResolver)];
+          emitChannels(node, 'window', op, detectedVia, channels);
         }
       }
     }
@@ -275,6 +351,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
         };
         if (occ.foldedFrom) pushed.foldedFrom = occ.foldedFrom;
         if (occ.foldedFromModule) pushed.foldedFromModule = occ.foldedFromModule;
+        if (occ.aliasedFrom) pushed.aliasedFrom = occ.aliasedFrom;
         groups.get(groupKey).occurrences.push(pushed);
       }
     }

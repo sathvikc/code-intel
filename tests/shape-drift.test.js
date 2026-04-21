@@ -539,6 +539,88 @@ test('integration: schema shape', () => {
   assert.equal(typeof o.snippet, 'string');
 });
 
+// ---------- alias-chain read-follow (Gap F / shape-drift v2) ----------
+
+test('alias-chain read: `const raw = getItem(K); JSON.parse(raw)` surfaces as a read on K', () => {
+  const { reads } = analyzeSource(
+    `function readUser() {
+       const raw = localStorage.getItem('user.profile');
+       const data = JSON.parse(raw || '{}');
+       return data.firstName;
+     }`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 1, 'one read detected through the alias');
+  const r = reads[0];
+  assert.equal(r.storage, 'localStorage');
+  assert.equal(r.key, 'user.profile');
+  assert.equal(r.aliasedFrom, 'raw');
+  assert.deepEqual(r.keys, ['firstName']);
+});
+
+test('alias-chain read: reassigned binding is NOT followed', () => {
+  const { reads } = analyzeSource(
+    `function readUser() {
+       let raw = localStorage.getItem('user.profile');
+       raw = 'tampered';
+       const data = JSON.parse(raw || '{}');
+       return data.firstName;
+     }`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 0, 'reassigned alias is not foldable; no read emitted');
+});
+
+test('alias-chain read: module-scope alias is still visible from an inner function', () => {
+  const { reads } = analyzeSource(
+    `const raw = localStorage.getItem('user.profile');
+     function readUser() {
+       // The module-scope binding is a valid outer scope for the use-site
+       // inside readUser, so alias-follow resolves through it.
+       return JSON.parse(raw || '{}').firstName;
+     }`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].aliasedFrom, 'raw');
+});
+
+test('alias-chain read: integration — writer/reader pair with alias-follow surfaces drift', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'alias-drift' }));
+  write(a, 'src/writer.ts', `
+    localStorage.setItem('profile.v1', JSON.stringify({ firstName: 'a', lastName: 'b' }));
+  `);
+  write(a, 'src/reader.ts', `
+    function readProfile() {
+      const raw = localStorage.getItem('profile.v1');
+      const data = JSON.parse(raw || '{}');
+      return data.first_name;
+    }
+  `);
+  const result = analyzeProjects([a]);
+  const finding = result.findings.find((f) => f.key === 'profile.v1');
+  assert.ok(finding, 'writer/reader pair found through alias chain');
+  assert.deepEqual(finding.writeShape.sort(), ['firstName', 'lastName']);
+  assert.deepEqual(finding.readShape, ['first_name']);
+  assert.deepEqual(finding.writeOnlyKeys, ['firstName', 'lastName']);
+  assert.deepEqual(finding.readOnlyKeys, ['first_name']);
+  const readOcc = finding.occurrences.find((o) => o.op === 'read');
+  assert.equal(readOcc.aliasedFrom, 'raw', 'occurrence carries aliasedFrom tag');
+});
+
+test('alias-chain read: inline form still works (regression — alias path does not break existing behaviour)', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'inline-drift' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', JSON.stringify({ firstName: 'a', lastName: 'b' }));`);
+  write(a, 'src/r.ts', `const { first_name } = JSON.parse(localStorage.getItem('k') || '{}');`);
+  const result = analyzeProjects([a]);
+  const finding = result.findings.find((f) => f.key === 'k');
+  assert.ok(finding);
+  const readOcc = finding.occurrences.find((o) => o.op === 'read');
+  assert.equal(readOcc.aliasedFrom, undefined, 'no alias field on inline reads');
+});
+
 test('D15: cross-file imported key surfaces drift between writer and reader', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'xfile-drift' }));

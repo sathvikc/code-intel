@@ -126,10 +126,28 @@ test('does NOT fold a reassigned channel binding', () => {
   assert.equal(occ[0].foldedFrom, null);
 });
 
-test('dispatch with pre-constructed event is dynamic', () => {
-  // We can see `dispatchEvent(e)` but don't know what `e` is statically.
+test('dispatch with pre-constructed event: alias-follow resolves the channel (P22)', () => {
+  // `const e = new CustomEvent('x'); dispatchEvent(e)` — the alias is a
+  // same-scope non-reassigned const, so we see through it and record
+  // the dispatch on channel 'x' with aliasedFrom tag.
   const occ = analyzeSource(
     `const e = new CustomEvent('x');
+     window.dispatchEvent(e);`,
+    'f.ts',
+  );
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].dynamic, false);
+  assert.equal(occ[0].name, 'x');
+  assert.equal(occ[0].aliasedFrom, 'e');
+});
+
+test('dispatch with reassigned alias is still dynamic', () => {
+  // `let e = new CustomEvent('x'); e = other; dispatchEvent(e)` — the
+  // binding is reassigned, so the alias is not foldable and the dispatch
+  // stays dynamic. This is the regression guard for the P22 scope.
+  const occ = analyzeSource(
+    `let e = new CustomEvent('x');
+     e = somethingElse;
      window.dispatchEvent(e);`,
     'f.ts',
   );
@@ -333,6 +351,62 @@ test('dynamic findings are NOT filtered by native-event rule', () => {
   const result = analyzeProjects([a]);
   assert.equal(result.findings.length, 1);
   assert.equal(result.findings[0].dynamic, true);
+});
+
+// ---------- P22: dispatch alias-follow (ternary + integration) ----------
+
+test('P22: ternary alias emits two dispatch occurrences (one per branch)', () => {
+  const occ = analyzeSource(
+    `function forward(evt) {
+       const fwd = evt instanceof CustomEvent
+         ? new CustomEvent('A', { bubbles: true, detail: evt.detail })
+         : new Event('B', { bubbles: true });
+       window.dispatchEvent(fwd);
+     }`,
+    'f.ts',
+  );
+  const names = occ.filter((o) => o.op === 'dispatch').map((o) => o.name).sort();
+  assert.deepEqual(names, ['A', 'B'], 'both ternary branches emit');
+  for (const o of occ) {
+    if (o.op === 'dispatch') assert.equal(o.aliasedFrom, 'fwd');
+  }
+});
+
+test('P22: alias-follow only triggers for same-scope const/let, not cross-function', () => {
+  // The alias `fwd` is declared inside makeForwarder; the dispatch uses
+  // a parameter. Can't be resolved via our same-scope resolver — the
+  // parameter binding has no initializer the resolver understands.
+  const occ = analyzeSource(
+    `function makeForwarder() {
+       return new CustomEvent('A');
+     }
+     function dispatcher(fwd) {
+       window.dispatchEvent(fwd);
+     }`,
+    'f.ts',
+  );
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].dynamic, true, 'parameter-bound dispatch stays dynamic (out of v1 scope)');
+});
+
+test('P22: integration — aliased dispatch collapses with a listener on the same channel', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'p22-int' }));
+  write(a, 'src/pub.ts', `
+    function forward() {
+      const fwd = new CustomEvent('profile:changed', { detail: {} });
+      window.dispatchEvent(fwd);
+    }
+  `);
+  write(a, 'src/sub.ts', `window.addEventListener('profile:changed', () => {});`);
+  const result = analyzeProjects([a]);
+  const finding = result.findings.find((f) => f.channel === 'profile:changed');
+  assert.ok(finding, 'aliased dispatch + listen collapse into one finding');
+  assert.equal(finding.dynamic, false);
+  const ops = new Set(finding.occurrences.map((o) => o.op));
+  assert.ok(ops.has('dispatch') && ops.has('listen'));
+  const dispatchOcc = finding.occurrences.find((o) => o.op === 'dispatch');
+  assert.equal(dispatchOcc.aliasedFrom, 'fwd');
 });
 
 test('D15: folds cross-file `import { CH } from "./events"` for dispatch + listen', () => {

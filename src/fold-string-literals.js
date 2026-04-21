@@ -56,8 +56,19 @@ export function buildFoldMap(sourceFile) {
   const reassignedNames = collectReassignedNames(sourceFile);
   /** @type {Map<string, Array<{ decl: ts.VariableDeclaration, value: string, scope: ts.Node }>>} */
   const declarationsByName = new Map();
-  collectCandidateDeclarations(sourceFile, declarationsByName, reassignedNames);
-  return { declarationsByName, reassignedNames };
+  /**
+   * A strictly larger map than `declarationsByName`: every non-reassigned
+   * `const` / `let` binding, keyed by name, regardless of initializer
+   * shape. Consumed by `resolveSameScopeBinding` for single-hop alias
+   * follow (e.g. `const raw = storage.getItem(K); JSON.parse(raw)` or
+   * `const fwd = new CustomEvent('X'); dispatchEvent(fwd)`). Kept
+   * separate so the string-literal fold path stays untouched.
+   *
+   * @type {Map<string, Array<{ decl: ts.VariableDeclaration, init: ts.Expression, scope: ts.Node }>>}
+   */
+  const bindingsByName = new Map();
+  collectCandidateDeclarations(sourceFile, declarationsByName, bindingsByName, reassignedNames);
+  return { declarationsByName, bindingsByName, reassignedNames };
 }
 
 /**
@@ -90,6 +101,49 @@ export function resolveFoldedIdentifier(useNode, foldMap) {
   }
 
   return best ? { value: best.value, name } : null;
+}
+
+/**
+ * Resolve an Identifier use-site to the initializer expression of its
+ * nearest-scope non-reassigned `const` / `let` binding. Single-hop only:
+ * the returned `init` is exactly whatever the declaration wrote, not
+ * recursively resolved.
+ *
+ * This is the generalised cousin of `resolveFoldedIdentifier` — same
+ * reassignment / scope / use-before-decl discipline, but returns the
+ * raw initializer node instead of filtering to string literals. Used
+ * by detectors that want to look through one level of aliasing:
+ *
+ *   const raw = localStorage.getItem(K);  // ← init is a CallExpression
+ *   JSON.parse(raw).field                  // ← alias-follow: init reveals K
+ *
+ *   const fwd = new CustomEvent('X');      // ← init is a NewExpression
+ *   window.dispatchEvent(fwd);             // ← alias-follow: init reveals 'X'
+ *
+ * @returns {{ init: import('typescript').Expression, name: string, decl: import('typescript').VariableDeclaration } | null}
+ */
+export function resolveSameScopeBinding(useNode, foldMap) {
+  if (!useNode || !ts.isIdentifier(useNode)) return null;
+  const name = useNode.text;
+  const candidates = foldMap.bindingsByName.get(name);
+  if (!candidates || candidates.length === 0) return null;
+
+  const usePos = useNode.getStart();
+  let best = null;
+  let bestScopeStart = -1;
+
+  for (const cand of candidates) {
+    const scopeStart = cand.scope.getStart();
+    const scopeEnd = cand.scope.getEnd();
+    if (usePos < scopeStart || usePos > scopeEnd) continue;
+    if (cand.decl.getStart() >= usePos) continue; // use-before-decl guard
+    if (scopeStart > bestScopeStart) {
+      best = cand;
+      bestScopeStart = scopeStart;
+    }
+  }
+
+  return best ? { init: best.init, name, decl: best.decl } : null;
 }
 
 /**
@@ -233,10 +287,12 @@ function collectReassignedNames(sourceFile) {
 }
 
 /**
- * Walk every VariableDeclaration and keep the ones that qualify as
- * foldable string-literal constants.
+ * Walk every VariableDeclaration once and populate both the
+ * string-literal fold map (`byName`) and the broader same-scope binding
+ * map (`bindingsByName`). Both maps share the same reassignment pre-pass
+ * and the same nearest-scope resolution semantics.
  */
-function collectCandidateDeclarations(sourceFile, byName, reassignedNames) {
+function collectCandidateDeclarations(sourceFile, byName, bindingsByName, reassignedNames) {
   function visit(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const list = node.parent;
@@ -248,11 +304,18 @@ function collectCandidateDeclarations(sourceFile, byName, reassignedNames) {
         const name = node.name.text;
         if ((isConst || isLet) && !reassignedNames.has(name)) {
           const init = node.initializer;
-          if (init && (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))) {
+          if (init) {
             const scope = enclosingScope(node);
             if (scope) {
-              if (!byName.has(name)) byName.set(name, []);
-              byName.get(name).push({ decl: node, value: init.text, scope });
+              // Always register in the broader binding map.
+              if (!bindingsByName.has(name)) bindingsByName.set(name, []);
+              bindingsByName.get(name).push({ decl: node, init, scope });
+              // Register in the string-literal fold map only if the
+              // initializer is a bare string literal.
+              if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)) {
+                if (!byName.has(name)) byName.set(name, []);
+                byName.get(name).push({ decl: node, value: init.text, scope });
+              }
             }
           }
         }

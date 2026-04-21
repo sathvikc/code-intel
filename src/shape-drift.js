@@ -57,7 +57,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
 import { readSource, scriptKindFor } from './framework-file.js';
-import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
+import { buildFoldMap, resolveStringArg, resolveSameScopeBinding } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'shape-drift';
@@ -394,7 +394,26 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
     if (isJsonParseCall(node)) {
       const rawArg = node.arguments[0];
       if (rawArg) {
-        const inner = unwrapParseArg(rawArg);
+        let inner = unwrapParseArg(rawArg);
+        // Single-hop alias-follow: when the inner is just an identifier,
+        // try to resolve it to its nearest same-scope `const` / `let`
+        // binding and re-unwrap. This turns the canonical two-step read
+        //
+        //   const raw = storage.getItem(K);
+        //   const data = JSON.parse(raw || '{}');
+        //
+        // into the same finding the inline form would produce. The
+        // reassignment pre-pass in `buildFoldMap` ensures we don't
+        // follow a rebindable alias. Single-hop is the v1 boundary
+        // (see shape-drift v2 note in BACKLOG).
+        let aliasedFrom = null;
+        if (ts.isIdentifier(inner)) {
+          const aliased = resolveSameScopeBinding(inner, foldMap);
+          if (aliased) {
+            aliasedFrom = aliased.name;
+            inner = unwrapParseArg(aliased.init);
+          }
+        }
         const hit = storageGetItemKey(inner, sf, foldMap, crossFileResolver);
         if (hit) {
           const shape = extractReadShape(node, sf);
@@ -409,6 +428,7 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
             ...shape,
           };
           if (hit.foldedFromModule) r.foldedFromModule = hit.foldedFromModule;
+          if (aliasedFrom) r.aliasedFrom = aliasedFrom;
           reads.push(r);
         }
       }
@@ -520,6 +540,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
         };
         if (r.foldedFrom) occ.foldedFrom = r.foldedFrom;
         if (r.foldedFromModule) occ.foldedFromModule = r.foldedFromModule;
+        if (r.aliasedFrom) occ.aliasedFrom = r.aliasedFrom;
         return occ;
       }),
     ];
