@@ -60,7 +60,7 @@ Planned:
 - [ ] Cross-run content-hash AST cache on disk (watch-mode / CI warm-start; orthogonal to D14)
 - [ ] Nx integration — `npx nx show projects --affected` overlay on blast radius
 - [ ] Risk score (0–100) per finding and per report
-- [ ] Glob-aware `--exclude` — support `**/__tests__` / `**/*.spec.*` patterns (currently literal-path only)
+- [x] Glob-aware `--exclude` — supports `**/__tests__` / `**/*.spec.*` / `src/**` (in-house tiny glob matcher in `src/glob.js`, zero deps)
 - [ ] Compare mode (`--baseline <prior.json>`) — fingerprint-keyed set-difference between two runs; emits `diff.new` / `diff.resolved` / `diff.unchanged`
 - [x] Framework-file parsing — `.astro` (frontmatter + inline `<script>` blocks, line-preserved) — see D16
 - [ ] Framework-file parsing v2 — generalise the `.astro` extractor to `.vue` (`<script setup>`) and `.svelte` (`<script>`) in the shared framework-file module (see D16 "Scope of v1")
