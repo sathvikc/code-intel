@@ -93,18 +93,20 @@ function globalHostOf(node) {
  * For `dispatchEvent(new CustomEvent('foo', {...}))` the first arg is a
  * NewExpression whose own first arg is the channel name.
  * For `addEventListener('foo', handler)` the first arg is the name directly.
- * Returns { name, dynamic, expressionText, foldedFrom }.
+ * Returns { name, dynamic, expressionText, foldedFrom, foldedFromModule? }.
  *
- * Goes through the same-file fold helper so `const CH = 'profile:changed';
- * window.addEventListener(CH, …)` resolves to the literal. `foldedFrom`
- * carries the identifier name when folding fired, null otherwise.
+ * Goes through the shared fold helper so `const CH = 'profile:changed';
+ * window.addEventListener(CH, …)` resolves to the literal. When
+ * `crossFileResolver` is provided, imported constants also resolve and
+ * carry `foldedFromModule`. `foldedFrom` is the identifier name when
+ * folding fired, null otherwise.
  */
-function extractChannelFromListenerArg(argNode, sourceFile, foldMap) {
+function extractChannelFromListenerArg(argNode, sourceFile, foldMap, crossFileResolver) {
   if (!argNode) return { name: null, dynamic: true, expressionText: '', foldedFrom: null };
-  return extractStringOrDynamic(argNode, sourceFile, foldMap);
+  return extractStringOrDynamic(argNode, sourceFile, foldMap, crossFileResolver);
 }
 
-function extractChannelFromDispatchArg(argNode, sourceFile, foldMap) {
+function extractChannelFromDispatchArg(argNode, sourceFile, foldMap, crossFileResolver) {
   if (!argNode) return { name: null, dynamic: true, expressionText: '', foldedFrom: null };
   // `new CustomEvent('foo', …)` or `new Event('foo', …)`
   if (ts.isNewExpression(argNode)) {
@@ -115,7 +117,7 @@ function extractChannelFromDispatchArg(argNode, sourceFile, foldMap) {
       null;
     if (ctorName === 'CustomEvent' || ctorName === 'Event') {
       const nameArg = argNode.arguments?.[0];
-      if (nameArg) return extractStringOrDynamic(nameArg, sourceFile, foldMap);
+      if (nameArg) return extractStringOrDynamic(nameArg, sourceFile, foldMap, crossFileResolver);
       return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
     }
   }
@@ -123,19 +125,20 @@ function extractChannelFromDispatchArg(argNode, sourceFile, foldMap) {
   return { name: null, dynamic: true, expressionText: argNode.getText(sourceFile), foldedFrom: null };
 }
 
-function extractStringOrDynamic(node, sourceFile, foldMap) {
-  const { value, dynamic, expressionText, foldedFrom } = resolveStringArg(
+function extractStringOrDynamic(node, sourceFile, foldMap, crossFileResolver) {
+  const { value, dynamic, expressionText, foldedFrom, foldedFromModule } = resolveStringArg(
     node,
     sourceFile,
     foldMap,
+    crossFileResolver,
   );
-  return { name: value, dynamic, expressionText, foldedFrom };
+  return { name: value, dynamic, expressionText, foldedFrom, foldedFromModule };
 }
 
 /**
  * Parse a single file and return raw occurrences. Pure — no filesystem.
  */
-export function analyzeSource(code, filePath, preparsed) {
+export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const sourceFile = preparsed ?? ts.createSourceFile(
     filePath,
     code,
@@ -146,10 +149,10 @@ export function analyzeSource(code, filePath, preparsed) {
   const foldMap = buildFoldMap(sourceFile);
   const occurrences = [];
 
-  function record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom) {
+  function record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule) {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
-    occurrences.push({
+    const occ = {
       host,
       name,
       dynamic,
@@ -160,7 +163,9 @@ export function analyzeSource(code, filePath, preparsed) {
       line: line + 1,
       column: character + 1,
       snippet,
-    });
+    };
+    if (foldedFromModule) occ.foldedFromModule = foldedFromModule;
+    occurrences.push(occ);
   }
 
   function visit(node) {
@@ -175,11 +180,11 @@ export function analyzeSource(code, filePath, preparsed) {
           const host = globalHostOf(callee.expression);
           if (host) {
             const detectedVia = op === 'dispatch' ? 'custom-event' : 'event-listener';
-            const { name, dynamic, expressionText, foldedFrom } =
+            const { name, dynamic, expressionText, foldedFrom, foldedFromModule } =
               op === 'dispatch'
-                ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap)
-                : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap);
-            record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom);
+                ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap, crossFileResolver)
+                : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap, crossFileResolver);
+            record(node, host, name, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule);
           }
         }
       }
@@ -192,11 +197,11 @@ export function analyzeSource(code, filePath, preparsed) {
         const op = METHOD_OPS[callee.text];
         if (op) {
           const detectedVia = op === 'dispatch' ? 'custom-event' : 'event-listener';
-          const { name, dynamic, expressionText, foldedFrom } =
+          const { name, dynamic, expressionText, foldedFrom, foldedFromModule } =
             op === 'dispatch'
-              ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap)
-              : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap);
-          record(node, 'window', name, dynamic, expressionText, op, detectedVia, foldedFrom);
+              ? extractChannelFromDispatchArg(node.arguments[0], sourceFile, foldMap, crossFileResolver)
+              : extractChannelFromListenerArg(node.arguments[0], sourceFile, foldMap, crossFileResolver);
+          record(node, 'window', name, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule);
         }
       }
     }
@@ -230,6 +235,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const astCache = opts.astCache;
+  const crossFileResolver = opts.crossFileResolver;
   const groups = new Map();
 
   for (const project of projects) {
@@ -250,7 +256,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       }
       let occurrences;
       try {
-        occurrences = analyzeSource(code, absFile, preparsed);
+        occurrences = analyzeSource(code, absFile, preparsed, crossFileResolver);
       } catch {
         continue;
       }
@@ -279,6 +285,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
           snippet: occ.snippet,
         };
         if (occ.foldedFrom) pushed.foldedFrom = occ.foldedFrom;
+        if (occ.foldedFromModule) pushed.foldedFromModule = occ.foldedFromModule;
         groups.get(groupKey).occurrences.push(pushed);
       }
     }

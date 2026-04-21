@@ -72,20 +72,24 @@ function storageNameOf(node) {
 
 /**
  * Extract a key from a key-bearing node (method call arg or element-access
- * argumentExpression). Returns { key, dynamic, expressionText, foldedFrom }.
+ * argumentExpression). Returns { key, dynamic, expressionText, foldedFrom,
+ * foldedFromModule? }.
  *
- * Goes through the shared same-file fold helper so that
+ * Goes through the shared fold helper so that
  * `const K = 'app.session'; localStorage.setItem(K, …)` resolves to the
- * literal instead of being flagged dynamic. `foldedFrom` carries the
- * identifier name when the value was folded, null otherwise.
+ * literal. When `crossFileResolver` is provided, imported constants
+ * (`import { K } from './keys'; localStorage.setItem(K, …)`) also
+ * resolve and carry `foldedFromModule` so consumers can see where the
+ * binding came from. `foldedFrom` is null for inline literals.
  */
-function extractKey(argNode, sourceFile, foldMap) {
-  const { value, dynamic, expressionText, foldedFrom } = resolveStringArg(
+function extractKey(argNode, sourceFile, foldMap, crossFileResolver) {
+  const { value, dynamic, expressionText, foldedFrom, foldedFromModule } = resolveStringArg(
     argNode,
     sourceFile,
     foldMap,
+    crossFileResolver,
   );
-  return { key: value, dynamic, expressionText, foldedFrom };
+  return { key: value, dynamic, expressionText, foldedFrom, foldedFromModule };
 }
 
 /**
@@ -112,7 +116,7 @@ function classifyAccessOps(node) {
 /**
  * Parse a single file and return raw occurrences.
  */
-export function analyzeSource(code, filePath, preparsed) {
+export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const sourceFile = preparsed ?? ts.createSourceFile(
     filePath,
     code,
@@ -123,10 +127,10 @@ export function analyzeSource(code, filePath, preparsed) {
   const foldMap = buildFoldMap(sourceFile);
   const occurrences = [];
 
-  function record(node, storage, key, dynamic, expressionText, op, detectedVia, foldedFrom) {
+  function record(node, storage, key, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule) {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
-    occurrences.push({
+    const occ = {
       storage,
       key,
       dynamic,
@@ -137,7 +141,9 @@ export function analyzeSource(code, filePath, preparsed) {
       line: line + 1,
       column: character + 1,
       snippet,
-    });
+    };
+    if (foldedFromModule) occ.foldedFromModule = foldedFromModule;
+    occurrences.push(occ);
   }
 
   function visit(node) {
@@ -149,8 +155,8 @@ export function analyzeSource(code, filePath, preparsed) {
       if (op) {
         const storage = storageNameOf(propAccess.expression);
         if (storage) {
-          const { key, dynamic, expressionText, foldedFrom } = extractKey(node.arguments[0], sourceFile, foldMap);
-          record(node, storage, key, dynamic, expressionText, op, 'method-call', foldedFrom);
+          const { key, dynamic, expressionText, foldedFrom, foldedFromModule } = extractKey(node.arguments[0], sourceFile, foldMap, crossFileResolver);
+          record(node, storage, key, dynamic, expressionText, op, 'method-call', foldedFrom, foldedFromModule);
           // Fall through and let the walker recurse. Pattern 3 will skip the
           // method name (it's in STORAGE_API_MEMBERS), so there's no double
           // counting, and argument-nested storage accesses are still visited.
@@ -162,10 +168,10 @@ export function analyzeSource(code, filePath, preparsed) {
     if (ts.isElementAccessExpression(node)) {
       const storage = storageNameOf(node.expression);
       if (storage) {
-        const { key, dynamic, expressionText, foldedFrom } = extractKey(node.argumentExpression, sourceFile, foldMap);
+        const { key, dynamic, expressionText, foldedFrom, foldedFromModule } = extractKey(node.argumentExpression, sourceFile, foldMap, crossFileResolver);
         const ops = classifyAccessOps(node);
         for (const op of ops) {
-          record(node, storage, key, dynamic, expressionText, op, op === 'remove' ? 'delete' : 'indexed-access', foldedFrom);
+          record(node, storage, key, dynamic, expressionText, op, op === 'remove' ? 'delete' : 'indexed-access', foldedFrom, foldedFromModule);
         }
       }
     }
@@ -185,7 +191,7 @@ export function analyzeSource(code, filePath, preparsed) {
         if (storage) {
           const ops = classifyAccessOps(node);
           for (const op of ops) {
-            record(node, storage, keyName, false, keyName, op, op === 'remove' ? 'delete' : 'property-access', null);
+            record(node, storage, keyName, false, keyName, op, op === 'remove' ? 'delete' : 'property-access', null, null);
           }
         }
       }
@@ -216,6 +222,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const astCache = opts.astCache;
+  const crossFileResolver = opts.crossFileResolver;
   // group key: storage + '::' + (key ?? `__dynamic__::${project}::${file}::${line}`)
   // static keys are grouped across projects; dynamic occurrences stay per-site.
   const groups = new Map();
@@ -238,7 +245,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       }
       let occurrences;
       try {
-        occurrences = analyzeSource(code, absFile, preparsed);
+        occurrences = analyzeSource(code, absFile, preparsed, crossFileResolver);
       } catch {
         continue; // graceful: parse failure → skip file
       }
@@ -267,6 +274,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
           snippet: occ.snippet,
         };
         if (occ.foldedFrom) pushed.foldedFrom = occ.foldedFrom;
+        if (occ.foldedFromModule) pushed.foldedFromModule = occ.foldedFromModule;
         groups.get(groupKey).occurrences.push(pushed);
       }
     }

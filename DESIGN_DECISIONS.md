@@ -930,3 +930,152 @@ Shipping it now also sets the pattern for future cross-cutting
 orchestration state (alias tables, import-graph reuse in the same
 run) to thread through `opts` in the same style as `exclude`,
 `only`, `skip`, and now `astCache`.
+
+---
+
+## D15 — Cross-file string-literal constant folding
+
+**Status:** active
+**Extends:** D8 (same-file folding)
+**Resolves:** the "cross-file / imported / re-exported / barrel
+constants" half of Q8 that D8 explicitly deferred
+**Related:** D3 (stable schema — additive field), D14 (rides on the
+AST cache), D6 (duplicate-static-svg-id folding path — deliberately
+not wired in v2)
+
+**Decision:** `resolveStringArg` (in `src/fold-string-literals.js`)
+now accepts an optional fourth argument: a cross-file resolver
+closure. When same-file folding misses and the argument is a bare
+Identifier, the resolver is consulted. On hit, the occurrence gets
+both `foldedFrom` (the identifier name, as before) and a new
+additive field `foldedFromModule` (the module specifier as the
+importer wrote it — e.g. `./keys` or `@app/shared`). The resolver is
+built once per `impact` run by `src/cross-file-constants.js`, which
+walks every file (through the D14 AST cache) to collect two maps:
+
+- `exportsByFile`: for every file, the string-literal exports it
+  declares (including re-exports and star re-exports, unresolved at
+  collect time).
+- `importsByFile`: for every file, its ES import bindings keyed by
+  the local name.
+
+At query time, the resolver looks up the using file's import map to
+find the (module, exported-name) pair, resolves the module to an
+absolute path via the existing `import-graph.js` `resolveImport`
+(reusing tsconfig path aliases, extension candidates, and
+`index.{ts,tsx,js,jsx}` fallback), then walks the target file's
+export table — following re-export chains and expanding `export *
+from …` lazily, with a visited set to break cycles.
+
+The four detectors that consume folding (`shared-state-web-storage`,
+`shared-state-events`, `paired-keys`, `shape-drift`) thread the
+resolver through `analyzeSource` and `analyzeProjects` and propagate
+`foldedFromModule` to every occurrence it flows to. `impact.js`
+builds the index and the resolver once and hands the closure to each
+detector's `analyzeProjects(opts)`. Detectors with no folding needs
+ignore the extra opt key.
+
+**Scope of v2 (deliberately narrow):**
+
+- **Named and default imports of string literals only.** Covers
+  `import { K } from './keys'`, `import { K as J } from './keys'`,
+  `import K from './keys'` (default export of a string literal or
+  a local-literal identifier).
+- **Export forms handled:** `export const X = 'lit'`, `const X =
+  'lit'; export { X }`, `export { X as Y }`, `export { X } from
+  './mod'`, `export { X as Y } from './mod'`, `export * from
+  './mod'`, `export default 'lit'`, `export default X` where X is a
+  local literal.
+- **Reassignment guard preserved.** A name that is ever the target
+  of an assignment, compound assignment, or `++`/`--` in its own
+  file is not registered as an exportable literal — mirrors D8's
+  same-file discipline on the export side.
+- **Same-file wins over cross-file.** When a consumer file both
+  imports `K` and has a local `const K = '...'`, the local binding
+  is returned by `resolveFoldedIdentifier` before the resolver is
+  ever consulted. This matches JS shadowing semantics and means the
+  v2 addition cannot silently change any v1 behaviour.
+- **Backward compatible.** Detectors called without
+  `opts.crossFileResolver` fall back to v1 same-file folding
+  unchanged. Every existing unit test continues to exercise the
+  same-file path.
+
+**Explicitly out of scope (tracked on BACKLOG as "Cross-file
+constant folding v2.5"):**
+
+- **Namespace imports** (`import * as NS from './keys'; NS.K`).
+  Requires property-access-aware resolution; a different shape than
+  the identifier-to-literal path.
+- **Object-literal exports read by property** (`export const KEYS =
+  { S: 'lit' }; KEYS.S`). Same property-access problem.
+- **CommonJS** `const { K } = require('./keys')` and `require('./k').K`.
+- **Dynamic imports** (`await import('./keys')`) and **JSON imports**.
+- **Computed / concatenated / substituted-template exports** —
+  still deferred per D8.
+- **`duplicate-static-svg-id` id-resolution path.** D6 uses
+  `resolveStringArg` for JSX attribute values but we did not wire
+  the cross-file resolver into its `collectJsx` walk. SVG ids are
+  almost always inline literals in practice; revisit if dogfooding
+  surfaces a real case.
+
+**Interaction with D14's `--no-cache`:** the index-building walk
+reuses the AST cache; when `--no-cache` is set the cache is `null`,
+so the resolver is not built and detectors fall through to v1
+same-file behaviour. `--no-cache` therefore returns both pre-D14
+(no sharing) and pre-D15 (no cross-file fold) semantics in one
+switch — consistent with D14's framing of `--no-cache` as the
+single escape hatch to historic behaviour.
+
+**Output-schema impact (D3):** purely additive. Occurrences grow an
+optional `foldedFromModule: string` field when and only when the
+cross-file path fires. `foldedFrom` continues to mean "same-file
+identifier name" on hits where `foldedFromModule` is absent.
+
+**Alternatives considered:**
+
+- **Full TypeScript `Program` / `TypeChecker`.** Rejected. Would
+  give us cross-file symbols plus way more, but pulls in the slow,
+  project-config-dependent compiler pipeline (tsconfig resolution,
+  module graph, diagnostics) we have deliberately avoided since
+  D5. The syntactic resolver covers the ~90% of real cases (named
+  imports of exported literals) at a tiny fraction of the cost and
+  keeps us robust on repos with broken types.
+- **Build the index inside each detector.** Rejected. Four copies
+  of the walk would cost 4× the index-build time and make the
+  invariants (cycle handling, re-export resolution) fragile. Doing
+  it once in `impact.js` matches D14's orchestrator-scoped-state
+  pattern.
+- **Eagerly resolve the full constants graph at index-build
+  time.** Rejected. Re-export chains are common but the vast
+  majority of imported names are never folded (most identifiers in
+  a file are not string constants the detectors care about). Lazy
+  resolution keeps the cost proportional to fold-site count, not
+  to import-edge count.
+- **Widen the resolver return shape to carry full provenance
+  (resolved target file, re-export chain).** Deferred. The current
+  `{ value, moduleSource, importedAs }` is enough for the
+  occurrences we emit and for the AI reviewer to reason about the
+  coupling. Full provenance is logged as a v2.5 follow-up if a
+  real consumer asks.
+
+**Reasoning:** In real codebases, string keys / event channels /
+paired-write clusters almost always live in a shared `constants.ts`
+/ `keys.ts` / `events.ts` and are imported at the use sites. D8 saw
+through the inline case only, which meant every such codebase's
+cleanest code showed up as "dynamic keys" to the detectors — the
+exact opposite of what a reviewer wants. D15 is a force multiplier:
+zero new detector logic, but every folding-aware detector (and
+every future one) gets wider coverage the moment this helper exists.
+The v2 slice deliberately covers the forms a grep over real repos
+turns up most; the deferred forms are logged so the next real-world
+miss has an entry to revive.
+
+**Benchmark (self-scan on `code-intel`'s own `src/`):**
+
+- cached, D15 on: 1.41s user / ~0.85s wall (3-run avg)
+- cached, pre-D15 baseline: 1.33s user / 0.89s wall
+- `--no-cache` (D15 off, D14 off): 2.27s user / ~1.58s wall
+
+The ~0.08s user-time bump (6%) is the index-build walk. Wall time
+is within noise. Cache stats confirm the extra work: `size=60
+hits=480 misses=60` vs the pre-D15 `size=58 hits=406 misses=58`.

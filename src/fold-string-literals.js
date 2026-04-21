@@ -96,20 +96,31 @@ export function resolveFoldedIdentifier(useNode, foldMap) {
  * Resolve a call argument node to a uniform shape used by the detectors
  * that extract keys/channels from string args.
  *
- *   { value, dynamic, expressionText, foldedFrom }
+ *   { value, dynamic, expressionText, foldedFrom, foldedFromModule? }
  *
  * - Inline StringLiteral / NoSubstitutionTemplateLiteral:
  *     value = text, dynamic = false, foldedFrom = null
- * - Identifier that folds to a literal:
+ * - Identifier that folds to a literal via same-file declaration:
  *     value = literal, dynamic = false, foldedFrom = identifier name
+ * - Identifier that folds to a literal via cross-file import
+ *   (only when `crossFileResolver` is provided):
+ *     value = literal, dynamic = false,
+ *     foldedFrom = identifier name, foldedFromModule = module specifier
  * - Anything else:
  *     value = null, dynamic = true, foldedFrom = null
  *
  * `expressionText` is the original source text of the argument node,
  * preserved so downstream consumers still see the raw expression
  * (useful for reporting and for disambiguating distinct dynamic sites).
+ *
+ * `crossFileResolver`, when passed, has the signature
+ *   (identifierName: string, fromFile: string) =>
+ *     { value: string, moduleSource: string, importedAs: string } | null
+ * and is consulted only after same-file folding fails. Same-file
+ * declarations always win — if a file shadows an imported constant
+ * with a local binding of the same name, the local binding is used.
  */
-export function resolveStringArg(argNode, sourceFile, foldMap) {
+export function resolveStringArg(argNode, sourceFile, foldMap, crossFileResolver) {
   if (!argNode) {
     return { value: null, dynamic: true, expressionText: '', foldedFrom: null };
   }
@@ -129,6 +140,18 @@ export function resolveStringArg(argNode, sourceFile, foldMap) {
       expressionText: argNode.getText(sourceFile),
       foldedFrom: folded.name,
     };
+  }
+  if (crossFileResolver && ts.isIdentifier(argNode)) {
+    const xfile = crossFileResolver(argNode.text, sourceFile.fileName);
+    if (xfile) {
+      return {
+        value: xfile.value,
+        dynamic: false,
+        expressionText: argNode.getText(sourceFile),
+        foldedFrom: argNode.text,
+        foldedFromModule: xfile.moduleSource,
+      };
+    }
   }
   return {
     value: null,

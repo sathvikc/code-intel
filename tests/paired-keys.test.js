@@ -10,6 +10,9 @@ import {
   SCHEMA_VERSION,
   ANALYZER_ID,
 } from '../src/paired-keys.js';
+import { createAstCache } from '../src/ast-cache.js';
+import { buildConstantsIndex, makeCrossFileResolver } from '../src/cross-file-constants.js';
+import { resolveProject } from '../src/project.js';
 
 // ---------- analyzeSource (unit) ----------
 
@@ -368,4 +371,36 @@ test('integration: schema shape', () => {
   assert.ok(typeof o.column === 'number' && o.column > 0);
   assert.equal(typeof o.key, 'string');
   assert.equal(typeof o.snippet, 'string');
+});
+
+test('D15: folds cross-file imported keys into a single setItem cluster', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'xfile-pairs' }));
+  write(a, 'src/keys.ts', `
+    export const K_FLAGS = 'app.flags';
+    export const K_FLAGS_TS = 'app.flags.ts';
+  `);
+  write(a, 'src/cache.ts', `
+    import { K_FLAGS, K_FLAGS_TS } from './keys';
+    export function cacheFlags(v) {
+      sessionStorage.setItem(K_FLAGS, JSON.stringify(v));
+      sessionStorage.setItem(K_FLAGS_TS, String(Date.now()));
+    }
+  `);
+
+  const astCache = createAstCache();
+  const index = buildConstantsIndex([resolveProject(a)], { astCache });
+  const crossFileResolver = makeCrossFileResolver(index);
+  const result = analyzeProjects([a], { astCache, crossFileResolver });
+
+  assert.equal(result.findings.length, 1, 'one cluster even with imported keys');
+  const f = result.findings[0];
+  assert.equal(f.storage, 'sessionStorage');
+  assert.deepEqual(f.keys.sort(), ['app.flags', 'app.flags.ts']);
+  assert.equal(f.occurrences.length, 2);
+  const folded = f.occurrences.map((o) => o.foldedFrom).sort();
+  assert.deepEqual(folded, ['K_FLAGS', 'K_FLAGS_TS']);
+  for (const o of f.occurrences) {
+    assert.equal(o.foldedFromModule, './keys');
+  }
 });

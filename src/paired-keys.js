@@ -108,7 +108,7 @@ function storageNameOf(node) {
  * declaration (e.g. as a statement of the outer function's body), the
  * walker returns zero hits for it.
  */
-function findLiteralSetItems(rootNode, sourceFile, foldMap) {
+function findLiteralSetItems(rootNode, sourceFile, foldMap, crossFileResolver) {
   const results = [];
   function visit(node) {
     if (isFunctionLike(node)) return;
@@ -118,21 +118,24 @@ function findLiteralSetItems(rootNode, sourceFile, foldMap) {
       if (ts.isIdentifier(propAccess.name) && propAccess.name.text === 'setItem') {
         const storage = storageNameOf(propAccess.expression);
         if (storage) {
-          // Accept inline string literals AND same-file folded constants.
-          // A paired-key cluster is about the KEY contract, not about
-          // whether the author typed the literal at the call site.
-          const resolved = resolveStringArg(node.arguments[0], sourceFile, foldMap);
+          // Accept inline string literals AND same-file / cross-file
+          // folded constants. A paired-key cluster is about the KEY
+          // contract, not about whether the author typed the literal
+          // at the call site.
+          const resolved = resolveStringArg(node.arguments[0], sourceFile, foldMap, crossFileResolver);
           if (!resolved.dynamic && resolved.value !== null) {
             const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
             const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
-            results.push({
+            const hit = {
               storage,
               key: resolved.value,
               foldedFrom: resolved.foldedFrom,
               line: line + 1,
               column: character + 1,
               snippet,
-            });
+            };
+            if (resolved.foldedFromModule) hit.foldedFromModule = resolved.foldedFromModule;
+            results.push(hit);
           }
         }
       }
@@ -187,7 +190,7 @@ function clusterize(perStatementHits) {
  * is returned in the shape emitted by analyzeProjects (minus project /
  * file fields, which are attached by the caller).
  */
-export function analyzeSource(code, filePath, preparsed) {
+export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const sf = preparsed ?? ts.createSourceFile(
     filePath,
     code,
@@ -202,7 +205,7 @@ export function analyzeSource(code, filePath, preparsed) {
     if (!block || !ts.isBlock(block)) return;
     const perStatement = block.statements.map((stmt, stmtIdx) => ({
       stmtIdx,
-      hits: findLiteralSetItems(stmt, sf, foldMap),
+      hits: findLiteralSetItems(stmt, sf, foldMap, crossFileResolver),
     }));
     for (const cluster of clusterize(perStatement)) {
       // De-dupe keys preserving first-seen order.
@@ -225,6 +228,7 @@ export function analyzeSource(code, filePath, preparsed) {
             snippet: h.snippet,
           };
           if (h.foldedFrom) occ.foldedFrom = h.foldedFrom;
+          if (h.foldedFromModule) occ.foldedFromModule = h.foldedFromModule;
           return occ;
         }),
       });
@@ -266,6 +270,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const astCache = opts.astCache;
+  const crossFileResolver = opts.crossFileResolver;
   const findings = [];
 
   for (const project of projects) {
@@ -286,7 +291,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       }
       let clusters;
       try {
-        clusters = analyzeSource(code, absFile, preparsed);
+        clusters = analyzeSource(code, absFile, preparsed, crossFileResolver);
       } catch {
         continue; // graceful parse-failure skip
       }
@@ -296,16 +301,21 @@ export function analyzeProjects(projectRoots, opts = {}) {
           kind: 'paired-keys',
           storage: cluster.storage,
           keys: cluster.keys,
-          occurrences: cluster.occurrences.map((o) => ({
-            project: project.id,
-            file: rel,
-            line: o.line,
-            column: o.column,
-            key: o.key,
-            op: 'write',
-            detectedVia: 'paired-setItem-cluster',
-            snippet: o.snippet,
-          })),
+          occurrences: cluster.occurrences.map((o) => {
+            const out = {
+              project: project.id,
+              file: rel,
+              line: o.line,
+              column: o.column,
+              key: o.key,
+              op: 'write',
+              detectedVia: 'paired-setItem-cluster',
+              snippet: o.snippet,
+            };
+            if (o.foldedFrom) out.foldedFrom = o.foldedFrom;
+            if (o.foldedFromModule) out.foldedFromModule = o.foldedFromModule;
+            return out;
+          }),
         });
       }
     }

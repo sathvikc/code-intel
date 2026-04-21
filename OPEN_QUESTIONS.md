@@ -156,11 +156,16 @@ Also decide: one MCP tool per analyzer, or one unified `query` tool.
 
 ## Q8 — Dynamic key constant-folding
 
-**Resolved by D8.** Same-file `const` / never-reassigned `let` with a
-bare string-literal or no-substitution template initializer is now
-folded across every detector that extracts a string key or channel.
-Cross-file / concatenated / substituted-template cases are explicitly
-deferred — see D8 for the exact scope and the rejected alternatives.
+**Resolved by D8 (same-file) + D15 (cross-file).** Same-file `const`
+/ never-reassigned `let` with a bare string-literal or
+no-substitution template initializer folds across every detector
+that extracts a string key or channel (D8). D15 extends this to
+imported constants — named and default imports, re-export chains,
+barrel files, star re-exports — via a per-run index threaded through
+the AST cache. Still deferred (v2.5 on BACKLOG): namespace imports,
+object-literal exports read by property, CommonJS, dynamic imports,
+computed / concatenated / substituted-template exports. See D15
+"Out of scope" for the full list and the reasoning.
 
 ---
 

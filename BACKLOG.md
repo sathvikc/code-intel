@@ -39,7 +39,8 @@ Planned:
 - [ ] Configuration file format (see Q3)
 - [ ] Inline suppression comments (see Q5)
 - [x] Same-file string-literal constant folding across `shared-state`, `shared-events`, `paired-keys`, `shape-drift` — resolves Q8 / see D8
-- [ ] Cross-file constant folding (imported string-literal constants, re-export chains, barrel files) — the v2 of the folding helper
+- [x] Cross-file constant folding (imported string-literal constants, re-export chains, barrel files) — see D15
+- [ ] Cross-file constant folding v2.5 (namespace imports `NS.K`, object-literal exports read by property, CommonJS `require('./k').X`, computed / concatenated / substituted-template exports, dynamic imports) — see D15 "Out of scope"
 - [ ] Wrapper-module detection (see Q2)
 - [x] Per-run AST cache shared across detectors + `import-graph` (~45% wall-time reduction on self-scan) — see D14
 - [ ] Cross-run content-hash AST cache on disk (watch-mode / CI warm-start; orthogonal to D14)

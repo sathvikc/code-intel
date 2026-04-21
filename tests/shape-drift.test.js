@@ -10,6 +10,9 @@ import {
   SCHEMA_VERSION,
   ANALYZER_ID,
 } from '../src/shape-drift.js';
+import { createAstCache } from '../src/ast-cache.js';
+import { buildConstantsIndex, makeCrossFileResolver } from '../src/cross-file-constants.js';
+import { resolveProject } from '../src/project.js';
 
 // ---------- write-shape extraction (unit) ----------
 
@@ -534,4 +537,36 @@ test('integration: schema shape', () => {
   assert.match(o.op, /^(read|write)$/);
   assert.equal(typeof o.opaque, 'boolean');
   assert.equal(typeof o.snippet, 'string');
+});
+
+test('D15: cross-file imported key surfaces drift between writer and reader', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'xfile-drift' }));
+  write(a, 'src/keys.ts', `export const K_USER = 'user.profile';`);
+  write(a, 'src/writer.ts', `
+    import { K_USER } from './keys';
+    localStorage.setItem(K_USER, JSON.stringify({ firstName: 'a', lastName: 'b' }));
+  `);
+  write(a, 'src/reader.ts', `
+    import { K_USER } from './keys';
+    const { firstName, email } = JSON.parse(localStorage.getItem(K_USER) || '{}');
+  `);
+
+  const astCache = createAstCache();
+  const index = buildConstantsIndex([resolveProject(a)], { astCache });
+  const crossFileResolver = makeCrossFileResolver(index);
+  const result = analyzeProjects([a], { astCache, crossFileResolver });
+
+  const finding = result.findings.find(
+    (f) => f.storage === 'localStorage' && f.key === 'user.profile',
+  );
+  assert.ok(finding, 'cross-file writer+reader find each other via shared key');
+  assert.deepEqual(finding.writeShape.sort(), ['firstName', 'lastName']);
+  assert.deepEqual(finding.readShape.sort(), ['email', 'firstName']);
+  assert.deepEqual(finding.writeOnlyKeys, ['lastName']);
+  assert.deepEqual(finding.readOnlyKeys, ['email']);
+  for (const o of finding.occurrences) {
+    assert.equal(o.foldedFrom, 'K_USER');
+    assert.equal(o.foldedFromModule, './keys');
+  }
 });

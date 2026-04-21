@@ -131,16 +131,21 @@ function isJsonParseCall(node) {
  * resolves to `K`'s literal value. `foldedFrom` carries the identifier
  * name when folding fired, null otherwise.
  */
-function storageGetItemKey(node, sourceFile, foldMap) {
+function storageGetItemKey(node, sourceFile, foldMap, crossFileResolver) {
   if (!ts.isCallExpression(node)) return null;
   if (!ts.isPropertyAccessExpression(node.expression)) return null;
   const pa = node.expression;
   if (!ts.isIdentifier(pa.name) || pa.name.text !== 'getItem') return null;
   const storage = storageNameOf(pa.expression);
   if (!storage) return null;
-  const resolved = resolveStringArg(node.arguments[0], sourceFile, foldMap);
+  const resolved = resolveStringArg(node.arguments[0], sourceFile, foldMap, crossFileResolver);
   if (resolved.dynamic || resolved.value === null) return null;
-  return { storage, key: resolved.value, foldedFrom: resolved.foldedFrom };
+  return {
+    storage,
+    key: resolved.value,
+    foldedFrom: resolved.foldedFrom,
+    foldedFromModule: resolved.foldedFromModule,
+  };
 }
 
 /**
@@ -349,7 +354,7 @@ function scriptKindFor(filePath) {
  * where each entry has { storage, key, line, column, opaque, keys?,
  * reason?, snippet }.
  */
-export function analyzeSource(code, filePath, preparsed) {
+export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const sf = preparsed ?? ts.createSourceFile(
     filePath,
     code,
@@ -376,11 +381,11 @@ export function analyzeSource(code, filePath, preparsed) {
       if (ts.isIdentifier(pa.name) && pa.name.text === 'setItem') {
         const storage = storageNameOf(pa.expression);
         if (storage) {
-          const resolvedKey = resolveStringArg(node.arguments[0], sf, foldMap);
+          const resolvedKey = resolveStringArg(node.arguments[0], sf, foldMap, crossFileResolver);
           if (!resolvedKey.dynamic && resolvedKey.value !== null) {
             const shape = extractWriteShape(node);
             const { line, column } = locOf(node);
-            writes.push({
+            const w = {
               storage,
               key: resolvedKey.value,
               foldedFrom: resolvedKey.foldedFrom,
@@ -388,7 +393,9 @@ export function analyzeSource(code, filePath, preparsed) {
               column,
               snippet: snippetOf(node),
               ...shape,
-            });
+            };
+            if (resolvedKey.foldedFromModule) w.foldedFromModule = resolvedKey.foldedFromModule;
+            writes.push(w);
           }
         }
       }
@@ -399,11 +406,11 @@ export function analyzeSource(code, filePath, preparsed) {
       const rawArg = node.arguments[0];
       if (rawArg) {
         const inner = unwrapParseArg(rawArg);
-        const hit = storageGetItemKey(inner, sf, foldMap);
+        const hit = storageGetItemKey(inner, sf, foldMap, crossFileResolver);
         if (hit) {
           const shape = extractReadShape(node, sf);
           const { line, column } = locOf(node);
-          reads.push({
+          const r = {
             storage: hit.storage,
             key: hit.key,
             foldedFrom: hit.foldedFrom,
@@ -411,7 +418,9 @@ export function analyzeSource(code, filePath, preparsed) {
             column,
             snippet: snippetOf(node),
             ...shape,
-          });
+          };
+          if (hit.foldedFromModule) r.foldedFromModule = hit.foldedFromModule;
+          reads.push(r);
         }
       }
     }
@@ -431,6 +440,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const astCache = opts.astCache;
+  const crossFileResolver = opts.crossFileResolver;
   /** @type {Map<string, { storage, key, writes: any[], reads: any[] }>} */
   const channels = new Map();
 
@@ -452,7 +462,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       }
       let parsed;
       try {
-        parsed = analyzeSource(code, absFile, preparsed);
+        parsed = analyzeSource(code, absFile, preparsed, crossFileResolver);
       } catch {
         continue;
       }
@@ -503,6 +513,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
           snippet: w.snippet,
         };
         if (w.foldedFrom) occ.foldedFrom = w.foldedFrom;
+        if (w.foldedFromModule) occ.foldedFromModule = w.foldedFromModule;
         return occ;
       }),
       ...reads.map((r) => {
@@ -519,6 +530,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
           snippet: r.snippet,
         };
         if (r.foldedFrom) occ.foldedFrom = r.foldedFrom;
+        if (r.foldedFromModule) occ.foldedFromModule = r.foldedFromModule;
         return occ;
       }),
     ];

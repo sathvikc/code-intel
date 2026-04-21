@@ -63,6 +63,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { createAstCache } from './ast-cache.js';
+import { buildConstantsIndex, makeCrossFileResolver } from './cross-file-constants.js';
 import * as importGraph from './import-graph.js';
 import { resolveProject } from './project.js';
 import { selectDetectors } from './detectors/index.js';
@@ -663,6 +664,20 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // CLI boundary rather than quietly producing an empty-but-valid report.
   const detectors = selectDetectors({ only: opts.only, skip: opts.skip });
 
+  // Cross-file string-literal constant folder (D15). Built once per run
+  // over the AST cache: walks every file to collect string-literal
+  // exports and each file's imports, then hands back a closure that
+  // detectors call from inside `resolveStringArg` when same-file
+  // folding misses. Null when the cache is disabled — without a cache
+  // the bookkeeping cost starts to dwarf the win, and `--no-cache` is
+  // an opt-out to pre-D14 behaviour by design.
+  let crossFileResolver = null;
+  if (astCache) {
+    const resolvedProjects = projectRoots.map(resolveProject);
+    const constantsIndex = buildConstantsIndex(resolvedProjects, { astCache, exclude });
+    crossFileResolver = makeCrossFileResolver(constantsIndex);
+  }
+
   // 1. Resolve the change set.
   let changedFilesAbs = null;
   let gitInfo = null;
@@ -681,7 +696,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   //    up the right `findingKind` wrapper label without a second map.
   const detectorResults = detectors.map((d) => ({
     detector: d,
-    result: d.module.analyzeProjects(projectRoots, { exclude, astCache }),
+    result: d.module.analyzeProjects(projectRoots, { exclude, astCache, crossFileResolver }),
   }));
 
   // Project id -> project root (for resolving occurrence.file -> absolute).

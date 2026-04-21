@@ -10,6 +10,9 @@ import {
   SCHEMA_VERSION,
   ANALYZER_ID,
 } from '../src/shared-state-web-storage.js';
+import { createAstCache } from '../src/ast-cache.js';
+import { buildConstantsIndex, makeCrossFileResolver } from '../src/cross-file-constants.js';
+import { resolveProject } from '../src/project.js';
 
 // ---------- analyzeSource (unit) ----------
 
@@ -322,4 +325,34 @@ test('schema shape: findings carry project, file (relative), line, op', () => {
   assert.equal(f.occurrences[0].file, path.join('src', 'x.ts'));
   assert.equal(f.occurrences[0].line, 2);
   assert.equal(f.occurrences[0].op, 'write');
+});
+
+test('D15: folds cross-file `import { K } from "./keys"` to the literal', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'xfile' }));
+  write(a, 'src/keys.ts', `export const K_SESSION = 'app.session';`);
+  write(a, 'src/writer.ts', `
+    import { K_SESSION } from './keys';
+    localStorage.setItem(K_SESSION, 'v');
+  `);
+  write(a, 'src/reader.ts', `
+    import { K_SESSION } from './keys';
+    const t = localStorage.getItem(K_SESSION);
+  `);
+
+  const astCache = createAstCache();
+  const index = buildConstantsIndex([resolveProject(a)], { astCache });
+  const crossFileResolver = makeCrossFileResolver(index);
+  const result = analyzeProjects([a], { astCache, crossFileResolver });
+
+  const finding = result.findings.find(
+    (f) => f.storage === 'localStorage' && f.key === 'app.session',
+  );
+  assert.ok(finding, 'cross-file writer+reader collapse into one finding');
+  assert.equal(finding.dynamic, false);
+  assert.equal(finding.occurrences.length, 2, 'writer + reader both resolved');
+  for (const o of finding.occurrences) {
+    assert.equal(o.foldedFrom, 'K_SESSION');
+    assert.equal(o.foldedFromModule, './keys');
+  }
 });

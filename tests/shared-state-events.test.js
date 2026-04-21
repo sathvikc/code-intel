@@ -11,6 +11,9 @@ import {
   SCHEMA_VERSION,
   ANALYZER_ID,
 } from '../src/shared-state-events.js';
+import { createAstCache } from '../src/ast-cache.js';
+import { buildConstantsIndex, makeCrossFileResolver } from '../src/cross-file-constants.js';
+import { resolveProject } from '../src/project.js';
 
 // ---------- analyzeSource (unit) ----------
 
@@ -330,4 +333,34 @@ test('dynamic findings are NOT filtered by native-event rule', () => {
   const result = analyzeProjects([a]);
   assert.equal(result.findings.length, 1);
   assert.equal(result.findings[0].dynamic, true);
+});
+
+test('D15: folds cross-file `import { CH } from "./events"` for dispatch + listen', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'xfile-ev' }));
+  write(a, 'src/events.ts', `export const CH_PROFILE = 'profile:changed';`);
+  write(a, 'src/pub.ts', `
+    import { CH_PROFILE } from './events';
+    window.dispatchEvent(new CustomEvent(CH_PROFILE, { detail: u }));
+  `);
+  write(a, 'src/sub.ts', `
+    import { CH_PROFILE } from './events';
+    window.addEventListener(CH_PROFILE, h);
+  `);
+
+  const astCache = createAstCache();
+  const index = buildConstantsIndex([resolveProject(a)], { astCache });
+  const crossFileResolver = makeCrossFileResolver(index);
+  const result = analyzeProjects([a], { astCache, crossFileResolver });
+
+  const finding = result.findings.find((f) => f.channel === 'profile:changed');
+  assert.ok(finding, 'dispatch + listen collapse into one channel finding');
+  assert.equal(finding.dynamic, false);
+  assert.equal(finding.occurrences.length, 2);
+  const ops = new Set(finding.occurrences.map((o) => o.op));
+  assert.ok(ops.has('dispatch') && ops.has('listen'), 'both sides resolved');
+  for (const o of finding.occurrences) {
+    assert.equal(o.foldedFrom, 'CH_PROFILE');
+    assert.equal(o.foldedFromModule, './events');
+  }
 });
