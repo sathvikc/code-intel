@@ -98,12 +98,17 @@ Options:
   --global <name> (trace only) target a classic-script global-binding name.
   --format <fmt>  (trace only) json (default) or mermaid.
   --pretty        Pretty-print JSON output.
-  --exclude <path>
-                  Project-root-relative directory path to skip. Repeatable.
-                  Literal paths only (no globs in v1); --exclude examples and
-                  --exclude examples/generated both work. Hardcoded ignores
-                  (node_modules, dist, build, .git, coverage, .next, .turbo,
-                  .cache) always apply on top and cannot be overridden.
+  --exclude <pat> Project-root-relative path or glob pattern to skip.
+                  Repeatable. Literal paths still work (--exclude examples,
+                  --exclude src/generated). Glob syntax: ** matches any
+                  number of path segments, * matches a single segment,
+                  ? matches one character. Common idioms:
+                    --exclude '**/__tests__'    (prune test dirs anywhere)
+                    --exclude '**/*.spec.*'     (prune spec files anywhere)
+                    --exclude 'src/**'          (prune all of src/)
+                  Hardcoded ignores (node_modules, dist, build, .git,
+                  coverage, .next, .turbo, .cache) always apply on top and
+                  cannot be overridden.
   --only <ids>    (impact only) comma-separated detector ids to run; other
                   detectors are skipped entirely (not just filtered post-hoc).
                   Repeatable. Unknown ids fail fast.

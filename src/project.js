@@ -11,6 +11,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { compileGlobs, matchesAnyGlob } from './glob.js';
+
 export const SOURCE_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
   // Framework files. Parsed via a pre-extraction step in `ast-cache.js`
@@ -48,16 +50,21 @@ export function resolveProject(root) {
 /**
  * Walk a directory and yield absolute paths to source files worth parsing.
  *
- * opts.exclude: array of root-relative directory paths to skip (literal, no
- * globs in v1). Each entry is resolved against `root`; when the walker
- * reaches a directory whose absolute path equals one of those, the entire
- * subtree is pruned. IGNORED_DIRS stays hardcoded on top of this — a user
- * cannot re-include `node_modules` via this option.
+ * `opts.exclude`: array of root-relative glob patterns. See `src/glob.js`
+ * for the supported syntax (`**`, `*`, `?`, literal). Patterns with no
+ * glob metacharacters behave as literal rel-path matches — so
+ * `--exclude examples` and `--exclude src/examples` keep working. New
+ * patterns like `--exclude '**\/__tests__'` or `--exclude '**\/*.spec.*'`
+ * let a single flag prune everything at any depth.
+ *
+ * Both directories and files are matched: a directory match prunes the
+ * subtree; a file match skips that single file.
+ *
+ * `IGNORED_DIRS` is checked separately and always applies on top — a
+ * user cannot re-include `node_modules` via this option.
  */
 export function* walkSourceFiles(root, opts = {}) {
-  const excludeSet = new Set(
-    (opts.exclude ?? []).map((e) => path.resolve(root, e)),
-  );
+  const excludes = compileGlobs(opts.exclude);
   const stack = [root];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -73,12 +80,15 @@ export function* walkSourceFiles(root, opts = {}) {
         if (IGNORED_DIRS.has(e.name)) continue;
       }
       const full = path.join(dir, e.name);
+      const rel = path.relative(root, full);
       if (e.isDirectory()) {
         if (IGNORED_DIRS.has(e.name)) continue;
-        if (excludeSet.has(full)) continue;
+        if (matchesAnyGlob(rel, excludes)) continue;
         stack.push(full);
       } else if (e.isFile()) {
-        if (SOURCE_EXTENSIONS.has(path.extname(e.name))) yield full;
+        if (!SOURCE_EXTENSIONS.has(path.extname(e.name))) continue;
+        if (matchesAnyGlob(rel, excludes)) continue;
+        yield full;
       }
     }
   }

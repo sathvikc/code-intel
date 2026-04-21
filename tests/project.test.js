@@ -132,6 +132,64 @@ test('walkSourceFiles: empty or missing opts.exclude is a no-op', () => {
   assert.deepEqual(emptyExclude, baseline);
 });
 
+// ---------- walkSourceFiles: glob-aware opts.exclude ----------
+
+test('walkSourceFiles: **/__tests__ prunes test dirs at every depth', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, '__tests__/root-test.ts', '');
+  write(root, 'src/__tests__/nested-test.ts', '');
+  write(root, 'src/a/b/__tests__/deep-test.ts', '');
+  const files = [...walkSourceFiles(root, { exclude: ['**/__tests__'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'a.ts')]);
+});
+
+test('walkSourceFiles: **/*.spec.* prunes spec files at every depth', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'src/a.spec.ts', '');
+  write(root, 'src/nested/b.spec.tsx', '');
+  write(root, 'src/nested/c.ts', '');
+  const files = [...walkSourceFiles(root, { exclude: ['**/*.spec.*'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [
+    path.join('src', 'a.ts'),
+    path.join('src', 'nested', 'c.ts'),
+  ]);
+});
+
+test('walkSourceFiles: src/** prunes everything under src/', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'src/nested/b.ts', '');
+  write(root, 'docs/c.ts', '');
+  const files = [...walkSourceFiles(root, { exclude: ['src/**'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('docs', 'c.ts')]);
+});
+
+test('walkSourceFiles: mixing literal + glob patterns composes cleanly', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'src/__tests__/nested.ts', '');
+  write(root, 'examples/b.ts', '');
+  write(root, 'e2e/c.ts', '');
+  const files = [...walkSourceFiles(root, { exclude: ['examples', '**/__tests__'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('e2e', 'c.ts'), path.join('src', 'a.ts')]);
+});
+
+test('walkSourceFiles: a glob that matches nothing is a no-op', () => {
+  const root = mktmp();
+  write(root, 'src/a.ts', '');
+  write(root, 'docs/b.ts', '');
+  const baseline = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  const excluded = [...walkSourceFiles(root, { exclude: ['**/nothing-here/**'] })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(excluded, baseline);
+});
+
 // ---------- exported constants ----------
 
 test('SOURCE_EXTENSIONS and IGNORED_DIRS are Sets with expected members', () => {
