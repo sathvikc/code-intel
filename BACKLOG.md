@@ -62,7 +62,8 @@ Planned:
 - [ ] Risk score (0–100) per finding and per report
 - [ ] Glob-aware `--exclude` — support `**/__tests__` / `**/*.spec.*` patterns (currently literal-path only)
 - [ ] Compare mode (`--baseline <prior.json>`) — fingerprint-keyed set-difference between two runs; emits `diff.new` / `diff.resolved` / `diff.unchanged`
-- [ ] Framework-file parsing — `.astro` (frontmatter + inline `<script>` blocks, line-preserved); generalise to `.vue` / `.svelte` in a shared framework-file extractor
+- [x] Framework-file parsing — `.astro` (frontmatter + inline `<script>` blocks, line-preserved) — see D16
+- [ ] Framework-file parsing v2 — generalise the `.astro` extractor to `.vue` (`<script setup>`) and `.svelte` (`<script>`) in the shared framework-file module (see D16 "Scope of v1")
 - [ ] Populate `graph` field in `impact --json` output (currently only rendered in markdown); MCP-consumer prep
 - [ ] `--since` soft warning on huge diffs (cap changed-files list in markdown; warn when >50)
 - [ ] `trace --layout star|flow|grouped` — writers / hub / readers split with file-group subgraphs; default `grouped` for N > 5

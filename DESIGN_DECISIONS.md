@@ -1079,3 +1079,147 @@ miss has an entry to revive.
 The ~0.08s user-time bump (6%) is the index-build walk. Wall time
 is within noise. Cache stats confirm the extra work: `size=60
 hits=480 misses=60` vs the pre-D15 `size=58 hits=406 misses=58`.
+
+---
+
+## D16 — Framework-file parsing (`.astro` first)
+
+**Status:** active
+**Related:** D5 (syntactic-only), D14 (AST cache), D1 (multi-project),
+BACKLOG ("Framework-file parsing")
+
+**Decision:** The walker now treats `.astro` files as first-class source
+files, and a shared `src/framework-file.js` module owns the
+extension-aware plumbing that was previously duplicated across every
+detector. The module exports four helpers:
+
+- `isFrameworkFile(path)` — true for files that need pre-extraction
+  before the TS parser can read them.
+- `extractFrameworkFile(path, source)` — dispatches to the per-format
+  extractor.
+- `extractAstroAsTs(src)` — the actual `.astro` extractor. Returns a
+  string of the **same length** as the input, with every byte that is
+  not JS/TS code replaced by a space (newlines preserved). AST positions
+  and line/column numbers therefore still map one-to-one back to the
+  original `.astro` file.
+- `readSource(path)` — single fs + extract helper shared by every
+  detector's `--no-cache` fallback path.
+- `scriptKindFor(path)` — single source of truth for extension →
+  `ts.ScriptKind` mapping, used by the AST cache and by every detector
+  that still calls `ts.createSourceFile` directly.
+
+Only two kinds of region are extracted in v1:
+
+1. **Frontmatter** — the code between the first two `---` lines, and
+   only when the file begins at byte 0 with `---`. Mid-file `---` blocks
+   are not honoured (matches the Astro parser's own rule).
+2. **Inline `<script>` blocks** — any `<script …>…</script>` tag that
+   does NOT carry a `src=` attribute. `<style>` blocks, Astro template
+   expressions (`{user.name}` in markup), and external-script bodies
+   are all blanked.
+
+Everything else becomes spaces. That includes the `---` fence lines
+themselves, the `<script>` / `</script>` tag characters, HTML tags, JSX
+expressions, and so on.
+
+`src/project.js` adds `.astro` to `SOURCE_EXTENSIONS`. `src/ast-cache.js`
+routes framework files through the extractor before
+`ts.createSourceFile`. Every detector that used to inline its own
+`fs.readFileSync(absFile, 'utf8')` + `ts.createSourceFile(..., localScriptKindFor(absFile))`
+pair now calls `readSource(absFile)` and `scriptKindFor(absFile)` from
+this module — ten local helpers collapsed into one.
+
+**Line-number invariant (why we blank rather than strip):**
+
+Snippets and reporter line numbers both come from character offsets
+into the cached `code`. If we stripped non-code content, every snippet
+and every diagnostic would point at a different line than the one the
+reviewer sees in their editor. By keeping the same byte count — spaces
+where the markup used to be, newlines where they used to be — the
+extracted source has identical line/column geometry to the original.
+AST nodes only live inside kept regions (the TS parser never sees the
+spaces), so `node.getStart()` / `node.getEnd()` correctly index back
+into unmodified script/frontmatter text.
+
+**Scope of v1 (deliberately narrow):**
+
+- **`.astro` only.** `.vue` and `.svelte` use the same mechanism
+  (frontmatter-ish block + `<script>` tags with different fences); they
+  can ship as additional extractor cases in the same module without
+  touching consumers. Logged on `BACKLOG.md` as the v2 slice.
+- **No per-script `lang="ts"` / `lang="tsx"` detection.** Every
+  `.astro` file parses under `ts.ScriptKind.TS`. Frontmatter is plain
+  TypeScript; inline scripts default to JS which TS parses cleanly. If
+  a user writes `<script lang="tsx">` with real JSX, it won't parse —
+  filed as a v2.5 concern, not observed in real dogfood.
+- **No source-mapping.** Because extraction is byte-for-byte
+  positional, we get free one-to-one mapping without a sourcemap file.
+  If we ever switch to a length-changing extraction we'll need a real
+  sourcemap; today we don't.
+- **No `<script is:inline>` special-casing.** For coupling analysis
+  both compiled and runtime-only scripts are relevant — listeners /
+  dispatches / storage writes in either show up in the graph. We parse
+  both and leave disambiguation to a later detector.
+- **Syntactic extractor only (D5).** No `astro/compiler` dependency,
+  no HTML parser, no YAML parser. A regex for the `<script>` shape and
+  a fence search for the frontmatter cover every real-world file we've
+  looked at; edge cases (quoted `>` inside attribute values, nested
+  script-in-template-literal) fall back to "don't extract" rather than
+  "crash."
+
+**Alternatives considered:**
+
+- **`@astrojs/compiler` as a dependency.** Rejected. Pulls in a
+  wasm/native binding, versions independently of Astro itself, and
+  gives us full AST faithfulness we don't use — we only need to know
+  where the TS regions live. The regex extractor is 40 lines and
+  covers the ~95% case that matters syntactically. If the AI-consumer
+  story ever requires full Astro-specific AST facts (hydration
+  directives, slots, etc.) we'd revisit.
+- **Per-detector extractor awareness.** Rejected. Keeping the
+  extraction logic inside every detector means 10 files each need to
+  know about `.astro`. That was the status quo for `scriptKindFor`
+  and already bit us — the `cross-file-constants.js` helper had
+  drifted from the detectors (different structure, no `.mjs` / `.cjs`
+  cases). Centralising in `framework-file.js` closes the drift
+  vector.
+- **Strip markup (length-changing extract).** Rejected. Would make
+  the extracted source shorter and easier to read, but break the
+  line-number invariant and force a sourcemap round-trip for every
+  snippet emitted. Byte-preserving is the cheap safe choice.
+- **Extract into a sibling `.ts` file on disk.** Rejected. Writes to
+  disk, pollutes workspaces, breaks the "pure in-memory analysis"
+  contract. In-memory string swap keeps `--no-cache` and `--cache-stats`
+  both working unchanged.
+- **Treat the whole `.astro` file as TSX.** Rejected. The TS parser
+  would interpret the markup as JSX, which would succeed-ish — but
+  produce an AST riddled with JSX elements that the detectors don't
+  want to see. Blanking non-script content produces a clean AST
+  rooted only at the actual frontmatter / script statements.
+
+**Reasoning:** The `.astro` blind spot was a systematic 100%-miss on
+every Astro codebase — every detector showed zero findings on files
+where real coupling lived, not because the patterns were absent but
+because the files were invisible. Fixing the walker-level support is
+mechanically small (40 lines of extractor, one `SOURCE_EXTENSIONS`
+entry, one `ast-cache` hook) but unlocks correct behaviour on an
+entire class of real codebases. Doing the consolidation of
+`scriptKindFor` at the same time turns what would have been "update
+11 files every time we add an extension" into "update 2 files"
+(`framework-file.js` + `project.js`) — exactly the pattern D13 laid
+down for the detector registry.
+
+**Benchmark (self-scan on `code-intel`'s own `src/`):**
+
+- cached, D16 on, warm: 1.38s user / ~0.78s wall (3-run avg, first
+  run excluded as cold)
+- cached, D15/pre-D16: 1.41s user / ~0.85s wall
+
+Wall-time improved slightly — the consolidation removed a few dozen
+duplicated function bodies the Node runtime used to load per detector
+module. Cache stats: `size=63 hits=504 misses=63` vs the pre-D16
+`size=60 hits=480 misses=60`. The extra 3 cache entries are
+`framework-file.js` and its siblings now reachable via the walker in
+the self-scan; the extra hits are the detectors touching each of
+those files in turn, exactly the multiplicative pattern D14 is
+designed to amortise.
