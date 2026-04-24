@@ -338,8 +338,260 @@ function extractReadShapeFromUsages(varName, bindingDecl, sourceFile) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Event shape helpers (event-shape-drift)
+// ---------------------------------------------------------------------------
+
+const GLOBAL_HOSTS = new Set(['window', 'globalThis', 'self']);
+
 /**
- * Analyse a single source file. Returns { writes: [...], reads: [...] }
+ * True if `node` is `new CustomEvent(...)` or `new Event(...)`.
+ */
+function isCustomEventNew(node) {
+  if (!ts.isNewExpression(node)) return false;
+  const ctor = node.expression;
+  const ctorName =
+    ts.isIdentifier(ctor) ? ctor.text :
+    (ts.isPropertyAccessExpression(ctor) && ts.isIdentifier(ctor.name)) ? ctor.name.text :
+    null;
+  return ctorName === 'CustomEvent' || ctorName === 'Event';
+}
+
+/**
+ * Extract the channel name from a `new CustomEvent(ch, ...)` / `new Event(ch, ...)` node.
+ * Returns { name, foldedFrom, foldedFromModule } or null.
+ */
+function channelFromNewEventNode(newExpr, sf, foldMap, crossFileResolver) {
+  if (!isCustomEventNew(newExpr)) return null;
+  const nameArg = newExpr.arguments?.[0];
+  if (!nameArg) return null;
+  const resolved = resolveStringArg(nameArg, sf, foldMap, crossFileResolver);
+  if (resolved.dynamic || resolved.value === null) return null;
+  return {
+    name: resolved.value,
+    foldedFrom: resolved.foldedFrom,
+    foldedFromModule: resolved.foldedFromModule,
+  };
+}
+
+/**
+ * Extract the detail shape from the second argument of a CustomEvent constructor:
+ *   new CustomEvent('ch', { detail: <expr> })
+ *
+ * Returns { opaque: false, keys } or { opaque: true, reason }.
+ */
+function extractDetailShapeFromConstructor(newExpr) {
+  const optionsArg = newExpr.arguments?.[1];
+  if (!optionsArg) return { opaque: true, reason: 'no-literal-detail' };
+  if (!ts.isObjectLiteralExpression(optionsArg)) return { opaque: true, reason: 'no-literal-detail' };
+
+  // Find the `detail` property in the options object.
+  let detailExpr = null;
+  for (const prop of optionsArg.properties) {
+    if (
+      (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop))
+      && ts.isIdentifier(prop.name)
+      && prop.name.text === 'detail'
+    ) {
+      detailExpr = ts.isPropertyAssignment(prop) ? prop.initializer : prop.name;
+      break;
+    }
+  }
+  if (!detailExpr) return { opaque: true, reason: 'no-literal-detail' };
+
+  const keys = extractObjectLiteralKeys(detailExpr);
+  if (keys) return { opaque: false, keys };
+  return { opaque: true, reason: 'no-literal-detail' };
+}
+
+/**
+ * Walk the handler body for usages of `paramName` against `e.detail.*` patterns.
+ *
+ * Handles:
+ *   1. `e.detail.field` → key = 'field'
+ *   2. `const { a, b } = e.detail` → keys = ['a', 'b']
+ *   3. `const d = e.detail; d.field` → walk same-scope usages of 'd'
+ *
+ * Returns { opaque: false, keys } or { opaque: true, reason }.
+ */
+function extractDetailShapeFromEventParam(paramName, handlerBody, sf) {
+  const keys = new Set();
+  let hasOpaqueAccess = false;
+
+  function visitForDetail(node) {
+    // Pattern 1: e.detail.field
+    if (
+      ts.isPropertyAccessExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === paramName
+      && ts.isIdentifier(node.expression.name)
+      && node.expression.name.text === 'detail'
+    ) {
+      if (ts.isIdentifier(node.name)) {
+        keys.add(node.name.text);
+      } else {
+        hasOpaqueAccess = true;
+      }
+    }
+
+    // Pattern 2 & 3: variable declarations that bind e.detail
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      const init = node.initializer;
+      // Check if the init is `e.detail`
+      const isEDetail =
+        ts.isPropertyAccessExpression(init)
+        && ts.isIdentifier(init.expression)
+        && init.expression.text === paramName
+        && ts.isIdentifier(init.name)
+        && init.name.text === 'detail';
+
+      if (isEDetail) {
+        // Pattern 2: const { a, b } = e.detail
+        if (ts.isObjectBindingPattern(node.name)) {
+          for (const el of node.name.elements) {
+            if (el.dotDotDotToken) {
+              hasOpaqueAccess = true;
+              continue;
+            }
+            const keyNode = el.propertyName ?? el.name;
+            if (ts.isIdentifier(keyNode)) {
+              keys.add(keyNode.text);
+            } else if (ts.isStringLiteral(keyNode)) {
+              keys.add(keyNode.text);
+            } else {
+              hasOpaqueAccess = true;
+            }
+          }
+          // Don't recurse into this node's children for the init itself.
+          return;
+        }
+        // Pattern 3: const d = e.detail; walk usages of d
+        if (ts.isIdentifier(node.name)) {
+          const aliasName = node.name.text;
+          // Walk the enclosing scope for d.field accesses.
+          let scope = node.parent;
+          while (scope && !isFunctionLike(scope) && scope.kind !== ts.SyntaxKind.SourceFile) {
+            scope = scope.parent;
+          }
+          if (scope) {
+            const result = extractReadShapeFromUsages(aliasName, node, sf);
+            if (!result.opaque) {
+              for (const k of result.keys) keys.add(k);
+              if (result.partial) hasOpaqueAccess = true;
+            } else {
+              hasOpaqueAccess = true;
+            }
+          }
+          return;
+        }
+      }
+    }
+
+    ts.forEachChild(node, visitForDetail);
+  }
+
+  visitForDetail(handlerBody);
+
+  if (keys.size === 0) {
+    return {
+      opaque: true,
+      reason: hasOpaqueAccess ? 'only-dynamic-accesses-on-binding' : 'no-detail-access',
+    };
+  }
+  return {
+    opaque: false,
+    keys: [...keys].sort(),
+    partial: hasOpaqueAccess || undefined,
+  };
+}
+
+/**
+ * Extract the detail shape read from an addEventListener handler function.
+ * `handler` is the second argument (function expression, arrow function, etc.)
+ *
+ * Returns { opaque, keys?, reason?, partial? }.
+ */
+function extractEventReadShapeFromHandler(handler, sf) {
+  if (!handler) return { opaque: true, reason: 'no-handler' };
+
+  // Only handle inline function expressions / arrow functions.
+  const isInline =
+    ts.isFunctionExpression(handler)
+    || ts.isArrowFunction(handler);
+
+  if (!isInline) return { opaque: true, reason: 'handler-not-inline' };
+
+  const params = handler.parameters;
+  if (!params || params.length === 0) return { opaque: true, reason: 'no-event-param' };
+
+  const firstParam = params[0];
+  const body = handler.body;
+  if (!body) return { opaque: true, reason: 'no-handler-body' };
+
+  const paramBinding = firstParam.name;
+
+  // Case 1: plain identifier `e`
+  if (ts.isIdentifier(paramBinding)) {
+    return extractDetailShapeFromEventParam(paramBinding.text, body, sf);
+  }
+
+  // Case 2: ObjectBindingPattern `{ detail }` / `{ detail: { a, b } }` / `{ detail: d }` / `{ detail: ...rest }`
+  if (ts.isObjectBindingPattern(paramBinding)) {
+    // Find the `detail` binding element.
+    let detailElement = null;
+    for (const el of paramBinding.elements) {
+      const propName = el.propertyName;
+      const elName = el.name;
+      // Match `{ detail }` (shorthand) or `{ detail: something }`
+      if (!propName && ts.isIdentifier(elName) && elName.text === 'detail') {
+        detailElement = { key: 'detail', binding: elName, rest: false };
+        break;
+      }
+      if (propName && ts.isIdentifier(propName) && propName.text === 'detail') {
+        detailElement = { key: 'detail', binding: elName, rest: !!el.dotDotDotToken };
+        break;
+      }
+    }
+
+    if (!detailElement) return { opaque: true, reason: 'no-detail-param' };
+
+    // `{ detail: ...rest }` → opaque
+    if (detailElement.rest) return { opaque: true, reason: 'rest-spread-detail' };
+
+    const binding = detailElement.binding;
+
+    // `{ detail: { a, b } }` — inline nested destructure
+    if (ts.isObjectBindingPattern(binding)) {
+      const keys = [];
+      for (const el of binding.elements) {
+        if (el.dotDotDotToken) return { opaque: true, reason: 'rest-destructure' };
+        const keyNode = el.propertyName ?? el.name;
+        if (ts.isIdentifier(keyNode)) {
+          keys.push(keyNode.text);
+        } else if (ts.isStringLiteral(keyNode)) {
+          keys.push(keyNode.text);
+        } else {
+          return { opaque: true, reason: 'non-identifier-destructure-key' };
+        }
+      }
+      if (keys.length === 0) return { opaque: true, reason: 'empty-destructure' };
+      return { opaque: false, keys: [...new Set(keys)].sort() };
+    }
+
+    // `{ detail }` shorthand or `{ detail: d }` alias — walk usages
+    if (ts.isIdentifier(binding)) {
+      return extractReadShapeFromUsages(binding.text, firstParam, sf);
+    }
+
+    return { opaque: true, reason: 'complex-detail-binding' };
+  }
+
+  return { opaque: true, reason: 'unsupported-param-pattern' };
+}
+
+/**
+ * Analyse a single source file. Returns { writes: [...], reads: [...], eventWrites: [...], eventReads: [...] }
  * where each entry has { storage, key, line, column, opaque, keys?,
  * reason?, snippet }.
  */
@@ -354,6 +606,8 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const foldMap = buildFoldMap(sf);
   const writes = [];
   const reads = [];
+  const eventWrites = [];
+  const eventReads = [];
 
   function snippetOf(node) {
     return node.getText(sf).split('\n')[0].slice(0, 200);
@@ -361,6 +615,74 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   function locOf(node) {
     const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
     return { line: line + 1, column: character + 1 };
+  }
+
+  /**
+   * Try to extract an event write from a dispatchEvent call node.
+   * Handles both inline `dispatchEvent(new CustomEvent(...))` and aliased
+   * `const ev = new CustomEvent(...); dispatchEvent(ev)`.
+   */
+  function tryExtractEventWrite(callNode) {
+    const arg = callNode.arguments[0];
+    if (!arg) return;
+
+    let newExpr = null;
+    let aliasedFrom = null;
+
+    if (isCustomEventNew(arg)) {
+      newExpr = arg;
+    } else if (ts.isIdentifier(arg)) {
+      // Single-hop alias follow
+      const aliased = resolveSameScopeBinding(arg, foldMap);
+      if (aliased && isCustomEventNew(aliased.init)) {
+        newExpr = aliased.init;
+        aliasedFrom = aliased.name;
+      }
+    }
+
+    if (!newExpr) return;
+
+    const channel = channelFromNewEventNode(newExpr, sf, foldMap, crossFileResolver);
+    if (!channel) return;
+
+    const shape = extractDetailShapeFromConstructor(newExpr);
+    const { line, column } = locOf(callNode);
+    const w = {
+      channel: channel.name,
+      foldedFrom: channel.foldedFrom,
+      line,
+      column,
+      snippet: snippetOf(callNode),
+      ...shape,
+    };
+    if (channel.foldedFromModule) w.foldedFromModule = channel.foldedFromModule;
+    if (aliasedFrom) w.aliasedFrom = aliasedFrom;
+    eventWrites.push(w);
+  }
+
+  /**
+   * Try to extract an event read from an addEventListener call node.
+   */
+  function tryExtractEventRead(callNode) {
+    const channelArg = callNode.arguments[0];
+    const handlerArg = callNode.arguments[1];
+    if (!channelArg) return;
+
+    const resolved = resolveStringArg(channelArg, sf, foldMap, crossFileResolver);
+    if (resolved.dynamic || resolved.value === null) return;
+
+    const shape = extractEventReadShapeFromHandler(handlerArg, sf);
+    const { line, column } = locOf(callNode);
+    const r = {
+      channel: resolved.value,
+      foldedFrom: resolved.foldedFrom,
+      line,
+      column,
+      snippet: snippetOf(callNode),
+      ...shape,
+    };
+    if (resolved.foldedFromModule) r.foldedFromModule = resolved.foldedFromModule;
+    eventReads.push(r);
   }
 
   function visit(node) {
@@ -434,10 +756,48 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
       }
     }
 
+    // ----- event write side: dispatchEvent(new CustomEvent(ch, {detail: {...}})) -----
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      // Case A: window.dispatchEvent(...) / globalThis.dispatchEvent(...)
+      if (
+        ts.isPropertyAccessExpression(callee)
+        && ts.isIdentifier(callee.name)
+        && callee.name.text === 'dispatchEvent'
+        && ts.isIdentifier(callee.expression)
+        && GLOBAL_HOSTS.has(callee.expression.text)
+      ) {
+        tryExtractEventWrite(node);
+      }
+      // Case B: bare dispatchEvent(...)
+      if (ts.isIdentifier(callee) && callee.text === 'dispatchEvent') {
+        tryExtractEventWrite(node);
+      }
+    }
+
+    // ----- event read side: addEventListener(ch, handler) -----
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      // Case A: window.addEventListener(...) / globalThis.addEventListener(...)
+      if (
+        ts.isPropertyAccessExpression(callee)
+        && ts.isIdentifier(callee.name)
+        && callee.name.text === 'addEventListener'
+        && ts.isIdentifier(callee.expression)
+        && GLOBAL_HOSTS.has(callee.expression.text)
+      ) {
+        tryExtractEventRead(node);
+      }
+      // Case B: bare addEventListener(...)
+      if (ts.isIdentifier(callee) && callee.text === 'addEventListener') {
+        tryExtractEventRead(node);
+      }
+    }
+
     ts.forEachChild(node, visit);
   }
   visit(sf);
-  return { writes, reads };
+  return { writes, reads, eventWrites, eventReads };
 }
 
 /**
@@ -452,6 +812,8 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const crossFileResolver = opts.crossFileResolver;
   /** @type {Map<string, { storage, key, writes: any[], reads: any[] }>} */
   const channels = new Map();
+  /** @type {Map<string, { channel: string, writes: any[], reads: any[] }>} */
+  const eventChannels = new Map();
 
   for (const project of projects) {
     for (const absFile of walkSourceFiles(project.root, { exclude })) {
@@ -485,6 +847,16 @@ export function analyzeProjects(projectRoots, opts = {}) {
         const id = `${r.storage}:${r.key}`;
         if (!channels.has(id)) channels.set(id, { storage: r.storage, key: r.key, writes: [], reads: [] });
         channels.get(id).reads.push({ ...r, project: project.id, file: rel });
+      }
+      for (const w of parsed.eventWrites) {
+        const id = w.channel;
+        if (!eventChannels.has(id)) eventChannels.set(id, { channel: id, writes: [], reads: [] });
+        eventChannels.get(id).writes.push({ ...w, project: project.id, file: rel });
+      }
+      for (const r of parsed.eventReads) {
+        const id = r.channel;
+        if (!eventChannels.has(id)) eventChannels.set(id, { channel: id, writes: [], reads: [] });
+        eventChannels.get(id).reads.push({ ...r, project: project.id, file: rel });
       }
     }
   }
@@ -564,11 +936,81 @@ export function analyzeProjects(projectRoots, opts = {}) {
     return a.key.localeCompare(b.key);
   });
 
+  // ----- event-shape-drift findings -----
+  const eventFindings = [];
+  for (const { channel, writes, reads } of eventChannels.values()) {
+    const literalWrites = writes.filter((w) => !w.opaque);
+    const literalReads = reads.filter((r) => !r.opaque);
+
+    if (literalWrites.length === 0 || literalReads.length === 0) continue;
+
+    const writeShape = new Set();
+    for (const w of literalWrites) for (const k of w.keys) writeShape.add(k);
+    const readShape = new Set();
+    for (const r of literalReads) for (const k of r.keys) readShape.add(k);
+
+    const writeOnlyKeys = [...writeShape].filter((k) => !readShape.has(k)).sort();
+    const readOnlyKeys = [...readShape].filter((k) => !writeShape.has(k)).sort();
+
+    if (writeOnlyKeys.length === 0 && readOnlyKeys.length === 0) continue;
+
+    const occurrences = [
+      ...writes.map((w) => {
+        const occ = {
+          project: w.project,
+          file: w.file,
+          line: w.line,
+          column: w.column,
+          op: 'dispatch',
+          shape: w.opaque ? null : w.keys,
+          opaque: w.opaque,
+          reason: w.reason ?? null,
+          snippet: w.snippet,
+        };
+        if (w.foldedFrom) occ.foldedFrom = w.foldedFrom;
+        if (w.foldedFromModule) occ.foldedFromModule = w.foldedFromModule;
+        if (w.aliasedFrom) occ.aliasedFrom = w.aliasedFrom;
+        return occ;
+      }),
+      ...reads.map((r) => {
+        const occ = {
+          project: r.project,
+          file: r.file,
+          line: r.line,
+          column: r.column,
+          op: 'listen',
+          shape: r.opaque ? null : r.keys,
+          opaque: r.opaque,
+          reason: r.reason ?? null,
+          partial: r.partial ?? undefined,
+          snippet: r.snippet,
+        };
+        if (r.foldedFrom) occ.foldedFrom = r.foldedFrom;
+        if (r.foldedFromModule) occ.foldedFromModule = r.foldedFromModule;
+        return occ;
+      }),
+    ];
+
+    eventFindings.push({
+      kind: 'event-shape-drift',
+      channel,
+      writeShape: [...writeShape].sort(),
+      readShape: [...readShape].sort(),
+      writeOnlyKeys,
+      readOnlyKeys,
+      opaqueWrites: writes.length - literalWrites.length,
+      opaqueReads: reads.length - literalReads.length,
+      occurrences,
+    });
+  }
+
+  eventFindings.sort((a, b) => a.channel.localeCompare(b.channel));
+
   return {
     version: SCHEMA_VERSION,
     analyzer: ANALYZER_ID,
     projects: projects.map((p) => ({ id: p.id, root: p.root })),
-    findings,
+    findings: [...findings, ...eventFindings],
   };
 }
 
@@ -577,11 +1019,17 @@ export function analyzeProjects(projectRoots, opts = {}) {
  */
 export function summarize(result) {
   const byStorage = { localStorage: 0, sessionStorage: 0 };
+  const byChannelKind = { storage: 0, event: 0 };
   let withReadOnlyDrift = 0;
   let withWriteOnlyDrift = 0;
   let withBothDrift = 0;
   for (const f of result.findings) {
-    byStorage[f.storage] = (byStorage[f.storage] ?? 0) + 1;
+    if (f.kind === 'shape-drift') {
+      byStorage[f.storage] = (byStorage[f.storage] ?? 0) + 1;
+      byChannelKind.storage++;
+    } else if (f.kind === 'event-shape-drift') {
+      byChannelKind.event++;
+    }
     const r = f.readOnlyKeys.length > 0;
     const w = f.writeOnlyKeys.length > 0;
     if (r && w) withBothDrift++;
@@ -592,6 +1040,7 @@ export function summarize(result) {
     projectCount: result.projects.length,
     findingCount: result.findings.length,
     byStorage,
+    byChannelKind,
     withReadOnlyDrift,
     withWriteOnlyDrift,
     withBothDrift,

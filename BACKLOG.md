@@ -28,7 +28,8 @@ Planned:
 - [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
-- [ ] `shape-drift` v2 — broaden channels (cookies, CustomEvent detail, URL params), follow single-hop alias chains on reads (`const raw = storage.getItem(K); JSON.parse(raw)`), and resolve cross-function / wrapper-module / constant-folded shapes so the SSR-inline-script opaque-writer case (P4) lights up
+- [x] `shape-drift` v2 (CustomEvent.detail channel) — `event-shape-drift` finding kind; write-side detail extraction from `new CustomEvent(ch, { detail: {...} })`; read-side detail shape from inline handlers (plain param, nested destructure, binding alias); alias-follow on dispatch; same literal-threshold emission rule as storage (see D17)
+- [ ] `shape-drift` v2 (remaining channels) — cookies, URL params; same detection pattern; BACKLOG until Q4 (non-web storage) shapes the backend taxonomy
 - [ ] `paired-keys` v2 — cross-cluster correlation: flag other writers that touch only one key of a known pair elsewhere in the codebase (v1 emits the intra-cluster finding only; see P10)
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 - [ ] `hydration-unsafe-read` — component render path reads a browser-only global, time-varying primitive, or client-only state in a file reachable from a server-rendered entry (P11; **unvalidated** — surfaced via web research, not a lived incident; see P11 Source for evidence trail; detector likely depends on framework-context config)

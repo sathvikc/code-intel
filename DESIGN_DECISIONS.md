@@ -1223,3 +1223,58 @@ module. Cache stats: `size=63 hits=504 misses=63` vs the pre-D16
 the self-scan; the extra hits are the detectors touching each of
 those files in turn, exactly the multiplicative pattern D14 is
 designed to amortise.
+
+---
+
+## D17 — `event-shape-drift`: CustomEvent.detail shape drift as a second finding kind in `shape-drift`
+
+**Status:** active
+**Related:** D3 (schema additive), D5 (syntactic only), D8/D15 (fold-aware channel resolution), D13 (registry), Q4 (non-web storage providers), Q11 (third-party buses)
+
+**Decision:** The `shape-drift` analyzer is extended to detect payload shape drift on `CustomEvent.detail` channels. A new finding kind `event-shape-drift` is emitted — additive alongside the existing `shape-drift` (storage) kind. The analyzer module, `ANALYZER_ID`, `SCHEMA_VERSION`, and registry entry are unchanged.
+
+**What the v1 slice detects:**
+
+- **Writer** — `dispatchEvent(new CustomEvent(ch, { detail: { a, b } }))` (or `window.dispatchEvent`) where the channel name resolves to a literal (fold-aware) and the detail argument is an inline object literal. One-hop alias follow: `const ev = new CustomEvent(ch, { detail: { a, b } }); dispatchEvent(ev)`.
+- **Reader** — `addEventListener(ch, handler)` (or `window.addEventListener`/`globalThis.addEventListener`) where `handler` is an inline function/arrow. Three handler-param forms:
+  - Plain identifier (`e`) → look for `e.detail.field`, `const { a } = e.detail`, `const d = e.detail; d.field` in handler body.
+  - ObjectBindingPattern `{ detail }` or `{ detail: d }` → walk usages of the bound name.
+  - Nested destructure `{ detail: { a, b } }` → immediate shape `[a, b]`.
+
+**Emission rule:** identical to storage — only emit when BOTH sides have ≥1 literal shape observation AND the aggregated shapes disagree. Opaque-only channels do not emit; literal-only channels do not emit.
+
+**Grouping key:** `channel` name (string). Host (`window` / `globalThis` / bare call) does not split groups — matches `shared-state-events` precedent.
+
+**Finding kind: `event-shape-drift`** (chosen over `shape-drift-event` for alphabetic scanability and natural noun-modifier order). Envelope:
+```js
+{
+  kind: 'event-shape-drift',
+  channel: string,
+  writeShape: string[], readShape: string[],
+  writeOnlyKeys: string[], readOnlyKeys: string[],
+  opaqueWrites: number, opaqueReads: number,
+  occurrences: [{ project, file, line, column, op: 'dispatch' | 'listen',
+                  shape, opaque, reason, partial?, snippet,
+                  foldedFrom?, foldedFromModule?, aliasedFrom? }]
+}
+```
+
+**Schema impact (D3):** purely additive. Existing consumers filtering on `f.kind === 'shape-drift'` see exactly the pre-D17 output. Event findings are separate entries with a distinct `kind`; no existing field's meaning changes.
+
+**`summarize` extension:** gains `byChannelKind: { storage: N, event: N }` alongside the existing `byStorage` counter.
+
+**Known v1 gaps (logged honestly; logged under BACKLOG / PATTERNS where relevant):**
+
+- Handler assigned to a named function reference: `addEventListener(ch, onProfileChanged)` — `onProfileChanged` is not inline; stays opaque.
+- Detail value is a cross-function object (not a same-scope literal): opaque.
+- Third-party buses (`mitt`, `nanoevents`, Redux, etc.) — out of scope per Q11.
+- Listeners on non-global hosts (`el.addEventListener`) — P24's turf.
+- Nested detail drift beyond top-level keys — v2 problem.
+
+**Alternatives considered:**
+
+- **Separate `shape-drift-events` analyzer (approach B).** Rejected: duplicates `extractObjectLiteralKeys`, the usage-walker, and the literal-threshold emission logic — the same conceptual pattern, split into two files with identical internals. D13 makes detector count cheap; code duplication is not cheap.
+- **Unified finding kind with a `channelKind` discriminator field (approach C).** Rejected: existing consumers doing `f.storage.toLowerCase()` or `f.key` would crash on event findings. A conditional meaning on existing fields is not "additive" under D3 — it is a breaking reading pattern even without a schema-version bump.
+- **`event-shape-drift` kind on a separate `shape-drift.events` analyzer ID.** Rejected: same duplication cost as approach B, plus an additional registry entry with no gain. One analyzer can emit two finding kinds; that is the established precedent (`duplicate-static-svg-id` emits `declare` and `reference` occurrence ops on a single finding kind; `shared-state-web-storage` groups both storage backends under one analyzer with a `backend` discriminator).
+
+**Reasoning:** The pattern is one thing — write shape vs read shape across a serialization boundary — regardless of whether the boundary is `JSON.stringify`/`getItem` or `CustomEvent.detail`. Keeping it in one module means the shared extraction helpers (`extractObjectLiteralKeys`, usage walker, same-scope binding resolver) are maintained once, and every future channel addition (cookies, URL params, `BroadcastChannel.postMessage`) follows the same extension point. The two-finding-kind approach threads the needle between D3's additive contract (old kind untouched) and D13's single-entry-per-pattern philosophy.
