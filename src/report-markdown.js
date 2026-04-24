@@ -53,6 +53,37 @@ export function renderMarkdown(result) {
   out.push(`_${tsShort}${baseStr}_`);
   out.push('');
 
+  // ---------- Diff (baseline compare mode) ----------
+  if (result.diff) {
+    const { new: added, resolved, unchanged } = result.diff;
+    out.push('## Diff');
+    out.push('');
+    if (added.length === 0 && resolved.length === 0) {
+      out.push(`No new findings since baseline. ${unchanged.length} unchanged.`);
+    } else {
+      out.push(`**+${added.length} new** · **-${resolved.length} resolved** · ${unchanged.length} unchanged`);
+      if (added.length > 0) {
+        out.push('');
+        out.push(`### New findings (${added.length})`);
+        out.push('');
+        for (const f of added) {
+          renderFindingLine(out, f);
+        }
+      }
+      if (resolved.length > 0) {
+        out.push('');
+        out.push(`### Resolved findings (${resolved.length})`);
+        out.push('');
+        for (const f of resolved) {
+          const confTag = f.confidence ? ` ${CONFIDENCE_TAGS[f.confidence] ?? ''}` : '';
+          out.push(`- ~~**\`${f.id}\`**~~${confTag} — ~~${f.message}~~`);
+          out.push(`  > Resolved since baseline.`);
+        }
+      }
+    }
+    out.push('');
+  }
+
   // ---------- Summary ----------
   out.push('## Summary');
   out.push('');
@@ -137,22 +168,7 @@ export function renderMarkdown(result) {
       out.push(`#### ${KIND_LABELS[kind] ?? kind}`);
       out.push('');
       for (const f of byKind.get(kind)) {
-        const changedMark = f.touchesChange ? ' ⬅ **touches change**' : '';
-        const confTag = f.confidence ? ` ${CONFIDENCE_TAGS[f.confidence] ?? ''}` : '';
-        out.push(`- **\`${f.id}\`**${confTag}${changedMark} — ${f.message}`);
-        if (f.confidenceReason) {
-          out.push(`  > ${f.confidenceReason}`);
-        }
-        if (f.relatedFiles?.length) {
-          out.push('  | Project | File | Line | Op |');
-          out.push('  | :--- | :--- | ---: | :--- |');
-          for (const rf of f.relatedFiles) {
-            out.push(
-              `  | \`${rf.project}\` | \`${rf.file}\` | ${rf.line ?? ''} | \`${rf.op ?? ''}\` |`,
-            );
-          }
-          out.push('');
-        }
+        renderFindingLine(out, f);
       }
     }
   }
@@ -161,6 +177,25 @@ export function renderMarkdown(result) {
 }
 
 // ---------- helpers ----------
+
+function renderFindingLine(out, f) {
+  const changedMark = f.touchesChange ? ' ⬅ **touches change**' : '';
+  const confTag = f.confidence ? ` ${CONFIDENCE_TAGS[f.confidence] ?? ''}` : '';
+  out.push(`- **\`${f.id}\`**${confTag}${changedMark} — ${f.message}`);
+  if (f.confidenceReason) {
+    out.push(`  > ${f.confidenceReason}`);
+  }
+  if (f.relatedFiles?.length) {
+    out.push('  | Project | File | Line | Op |');
+    out.push('  | :--- | :--- | ---: | :--- |');
+    for (const rf of f.relatedFiles) {
+      out.push(
+        `  | \`${rf.project}\` | \`${rf.file}\` | ${rf.line ?? ''} | \`${rf.op ?? ''}\` |`,
+      );
+    }
+    out.push('');
+  }
+}
 
 function groupBy(arr, keyFn) {
   const m = new Map();

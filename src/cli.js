@@ -17,6 +17,8 @@
 // are grouped across them so cross-repo coupling surfaces the same way
 // in-project coupling does.
 
+import fs from 'node:fs';
+
 import { createAstCache } from './ast-cache.js';
 import * as impact from './impact.js';
 import * as trace from './trace.js';
@@ -32,7 +34,7 @@ const ANALYZER_COMMANDS = Object.fromEntries(
 );
 
 const USAGE = `Usage:
-  code-intel impact          [paths...] [--since <ref>] [--markdown|--json] [--pretty] [--exclude <path>]
+  code-intel impact          [paths...] [--since <ref>] [--baseline <path>] [--markdown|--json] [--pretty] [--exclude <path>]
                              [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
                              [paths...] [--format json|mermaid] [--pretty] [--exclude <path>]
@@ -87,6 +89,11 @@ Options:
   --since <ref>   (impact only) git base ref to diff against. Resolves the set
                   of changed files; findings that touch them are sorted first
                   and marked; blast radius is computed.
+  --baseline <path>
+                  (impact only) Path to a prior impact --json output. When set,
+                  computes a fingerprint-keyed diff and adds a `diff` key to the
+                  JSON output (new / resolved / unchanged finding arrays). In
+                  markdown mode, prepends a diff summary section.
   --markdown      (impact only) Emit markdown report (default when --since is set
                   or when stdout is a TTY).
   --json          (impact only) Emit unified JSON report.
@@ -156,6 +163,7 @@ function parseImpactArgs(argv) {
   const args = {
     paths: [],
     since: null,
+    baseline: null,
     format: null, // 'markdown' | 'json' — decided below if null
     pretty: false,
     help: false,
@@ -176,6 +184,11 @@ function parseImpactArgs(argv) {
       const v = argv[++i];
       if (!v) throw new Error(`--exclude requires a value`);
       args.exclude.push(v);
+    }
+    else if (a === '--baseline') {
+      const v = argv[++i];
+      if (!v) throw new Error(`--baseline requires a path to a prior impact --json output`);
+      args.baseline = v;
     }
     else if (a === '--only') {
       const v = argv[++i];
@@ -229,6 +242,18 @@ async function runImpact(argv) {
     astCache,
   });
 
+  if (args.baseline) {
+    let baselineData;
+    try {
+      const raw = fs.readFileSync(args.baseline, 'utf8');
+      baselineData = JSON.parse(raw);
+    } catch (e) {
+      process.stderr.write(`--baseline: could not read ${args.baseline}: ${e.message}\n`);
+      return 2;
+    }
+    result.diff = impact.computeDiff(result.findings, baselineData.findings ?? []);
+  }
+
   if (args.format === 'markdown') {
     process.stdout.write(renderMarkdown(result));
   } else {
@@ -256,6 +281,7 @@ async function runImpact(argv) {
       + `${s.bySeverity.info ?? 0} info`
       + (s.findingsTouchingChange !== null ? ` (${s.findingsTouchingChange} touch change)` : '')
       + (s.blastRadius ? ` | blast radius: ${s.blastRadius.total}` : '')
+      + (result.diff ? ` | diff: +${result.diff.new.length} -${result.diff.resolved.length}` : '')
       + '\n',
   );
   return 0;

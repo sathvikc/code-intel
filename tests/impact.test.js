@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
-import { analyzeProjects, SCHEMA_VERSION, ANALYZER_ID } from '../src/impact.js';
+import { analyzeProjects, computeDiff, SCHEMA_VERSION, ANALYZER_ID } from '../src/impact.js';
 import { renderMarkdown } from '../src/report-markdown.js';
 
 function mktmp() {
@@ -669,4 +669,51 @@ test('exclude: blast radius respects opts.exclude', () => {
   );
   // src/consumer.ts must still be found in both runs.
   assert.ok(excluded.graph.blastRadius.some((b) => b.file.endsWith('consumer.ts')));
+});
+
+// ---------- --baseline diff integration ----------
+
+test('baseline diff: computeDiff(findings, []) — all are new', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+
+  const result = analyzeProjects([a]);
+  assert.ok(result.findings.length >= 1);
+
+  const diff = computeDiff(result.findings, []);
+  assert.equal(diff.new.length, result.findings.length, 'all findings are new against empty baseline');
+  assert.equal(diff.resolved.length, 0);
+  assert.equal(diff.unchanged.length, 0);
+});
+
+test('baseline diff: computeDiff(findings, findings) — all are unchanged', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+
+  const result = analyzeProjects([a]);
+  assert.ok(result.findings.length >= 1);
+
+  const diff = computeDiff(result.findings, result.findings);
+  assert.equal(diff.new.length, 0);
+  assert.equal(diff.resolved.length, 0);
+  assert.equal(diff.unchanged.length, result.findings.length, 'all findings are unchanged when baseline === current');
+});
+
+test('baseline diff: computeDiff([], findings) — all are resolved', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/w.ts', `localStorage.setItem('k', 1);`);
+  write(a, 'src/r.ts', `localStorage.getItem('k');`);
+
+  const result = analyzeProjects([a]);
+  assert.ok(result.findings.length >= 1);
+
+  const diff = computeDiff([], result.findings);
+  assert.equal(diff.new.length, 0);
+  assert.equal(diff.resolved.length, result.findings.length, 'all baseline findings are resolved when current is empty');
+  assert.equal(diff.unchanged.length, 0);
 });

@@ -579,6 +579,12 @@ function fingerprintFor(kind, detail) {
       // keep disagreeing does not change which channel the drift is on.
       parts.push(detail.storage ?? '?', detail.key ?? '');
       break;
+    case 'event-shape-drift':
+      // Per-channel identity: the finding is "the shape contract on the
+      // CustomEvent channel is broken." Adding more dispatch/listen sites
+      // that keep disagreeing does not change which channel the drift is on.
+      parts.push(detail.channel ?? '');
+      break;
     case 'duplicate-static-svg-id': {
       // Per-component, per-id identity. Moving the component to a new
       // file or renaming it changes the fingerprint (different bug site);
@@ -804,6 +810,40 @@ function wrap(kind, detail, rootById, changedFilesAbs) {
     relatedFiles,
     touchesChange,
   };
+}
+
+/**
+ * Compute the fingerprint-keyed diff between a current run's wrapped
+ * findings and a prior baseline's wrapped findings.
+ *
+ * Returns { new: [], resolved: [], unchanged: [] } where each array
+ * contains wrapped finding objects. "new" = in current, absent in
+ * baseline. "resolved" = in baseline, absent in current. "unchanged" =
+ * in both.
+ *
+ * Both arrays must be the `findings` array from an `impact --json`
+ * output (i.e. already-wrapped objects with a `fingerprint` field).
+ */
+export function computeDiff(currentFindings, baselineFindings) {
+  const baselineByFp = new Map(
+    (baselineFindings ?? []).map((f) => [f.fingerprint, f])
+  );
+  const currentByFp = new Map(
+    (currentFindings ?? []).map((f) => [f.fingerprint, f])
+  );
+
+  const added = [];
+  const unchanged = [];
+  for (const f of currentFindings ?? []) {
+    if (baselineByFp.has(f.fingerprint)) unchanged.push(f);
+    else added.push(f);
+  }
+  const resolved = [];
+  for (const f of baselineFindings ?? []) {
+    if (!currentByFp.has(f.fingerprint)) resolved.push(f);
+  }
+
+  return { new: added, resolved, unchanged };
 }
 
 function projectIdFor(absFile, rootById) {
