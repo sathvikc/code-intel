@@ -37,7 +37,7 @@ Planned:
 - [ ] `shared-events` v2 — orphan-channel sub-finding (writer-only / listener-only channels, info severity)
 - [x] `event-bridge` — listener whose handler re-dispatches the same channel to a different host; emits a new `event-bridge` finding kind (P23); v1: inline handlers only, same-channel only, see Q15/Q16/Q17
 - [ ] `element-scoped-listener` — low-confidence listeners on non-`window` hosts, candidate-linked to same-channel window listeners (P24; ships after `event-bridge`)
-- [ ] `structural-drift` — loose-typed cross-file object property drift without a serialization boundary (P12; reuses `shape-drift` AST machinery)
+- [x] `structural-drift` — exported const object literal shape vs. importer access-shape disagreement (P12); v1: direct exports only, top-level keys only; see Q18 for parameter-passing case
 - [ ] `lifecycle-cleanup-drift` — missing `removeEventListener` / `clearInterval` / observer `.disconnect()` / `AbortController.abort()` in paired register/teardown sites (P13)
 - [ ] `side-effect-at-import` — module-top-level writes / fetches / timers / DOM mutations (P14; reuses `stale-captures` walker)
 - [ ] `shared-request-state` — mutable module-scope state reachable from request-handler entry points; SSR multi-tenancy leak (P15; depends on framework-context config / Q3)

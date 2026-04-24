@@ -67,6 +67,7 @@ import fs from 'node:fs';
 import { walkSourceFiles } from './project.js';
 import { readSource, scriptKindFor } from './framework-file.js';
 import { loadAliases, resolveImport } from './import-graph.js';
+import { extractObjectLiteralKeys } from './shape-drift.js';
 
 // ---------------------------------------------------------------------------
 // Per-file collectors
@@ -227,6 +228,61 @@ export function collectImports(sourceFile) {
 }
 
 // ---------------------------------------------------------------------------
+// Object-export collectors (for structural-drift)
+// ---------------------------------------------------------------------------
+
+/**
+ * Collect every object-literal export from a single file's top level.
+ * Only handles DIRECT exports — `export const X = { ... }` and
+ * `export default { ... }`. Re-export chains are NOT followed here;
+ * `resolveObjectExport` does one-hop re-export resolution at lookup time.
+ *
+ * Returns Map<exportedName, { keys: string[], line: number, col: number, snippet: string }>
+ * Only entries where `extractObjectLiteralKeys` returns non-null are recorded
+ * (spread / computed keys → opaque → skip).
+ */
+export function collectObjectExports(sourceFile) {
+  const result = new Map();
+  const reassigned = collectReassignedNames(sourceFile);
+
+  // Helper to record a finding if the initializer is a non-opaque object literal.
+  function tryRecord(exportedName, initializer) {
+    if (!initializer) return;
+    if (!ts.isObjectLiteralExpression(initializer)) return;
+    const keys = extractObjectLiteralKeys(initializer);
+    if (!keys) return; // spread / computed → opaque
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(initializer.getStart(sourceFile));
+    const snippet = initializer.getText(sourceFile).split('\n')[0].slice(0, 200);
+    result.set(exportedName, { keys, line: line + 1, col: character + 1, snippet });
+  }
+
+  for (const stmt of sourceFile.statements) {
+    // `export const X = { ... }` / `export let X = { ... }`
+    if (ts.isVariableStatement(stmt) && hasExportModifier(stmt)) {
+      const list = stmt.declarationList;
+      const isConst = (list.flags & ts.NodeFlags.Const) !== 0;
+      const isLet = (list.flags & ts.NodeFlags.Let) !== 0;
+      if (!(isConst || isLet)) continue;
+      for (const decl of list.declarations) {
+        if (!decl.name || !ts.isIdentifier(decl.name)) continue;
+        const name = decl.name.text;
+        if (reassigned.has(name)) continue; // reassignment guard
+        tryRecord(name, decl.initializer);
+      }
+      continue;
+    }
+
+    // `export default { ... }`
+    if (ts.isExportAssignment(stmt) && !stmt.isExportEquals) {
+      tryRecord('default', stmt.expression);
+      continue;
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Index build + resolver
 // ---------------------------------------------------------------------------
 
@@ -235,9 +291,10 @@ export function collectImports(sourceFile) {
  *
  * Returns:
  *   {
- *     exportsByFile:  Map<absPath, { namedExports, starReexports }>,
- *     importsByFile:  Map<absPath, Map<localName, { module, exportedName }>>,
- *     aliasesByFile:  Map<absPath, Record<alias, targetPath>>,
+ *     exportsByFile:       Map<absPath, { namedExports, starReexports }>,
+ *     importsByFile:       Map<absPath, Map<localName, { module, exportedName }>>,
+ *     aliasesByFile:       Map<absPath, Record<alias, targetPath>>,
+ *     objectExportsByFile: Map<absPath, Map<exportedName, { keys, line, col, snippet }>>,
  *   }
  *
  * `aliasesByFile` lets the resolver call `resolveImport` with the
@@ -252,6 +309,7 @@ export function buildConstantsIndex(projects, opts = {}) {
   const exportsByFile = new Map();
   const importsByFile = new Map();
   const aliasesByFile = new Map();
+  const objectExportsByFile = new Map();
 
   for (const project of projects) {
     const projectAliases = loadAliases(project.root)?.aliases ?? {};
@@ -277,11 +335,12 @@ export function buildConstantsIndex(projects, opts = {}) {
 
       try { exportsByFile.set(absFile, collectExports(sourceFile)); } catch { /* tolerant */ }
       try { importsByFile.set(absFile, collectImports(sourceFile)); } catch { /* tolerant */ }
+      try { objectExportsByFile.set(absFile, collectObjectExports(sourceFile)); } catch { /* tolerant */ }
       aliasesByFile.set(absFile, projectAliases);
     }
   }
 
-  return { exportsByFile, importsByFile, aliasesByFile };
+  return { exportsByFile, importsByFile, aliasesByFile, objectExportsByFile };
 }
 
 /**
@@ -320,6 +379,61 @@ export function makeCrossFileResolver({ exportsByFile, importsByFile, aliasesByF
       importedAs: identifierName,
     };
   };
+}
+
+/**
+ * Resolve a named import binding in an importing file to the object-export
+ * entry it refers to.
+ *
+ * Signature:
+ *   resolveObjectExport(importerAbsFile, localBindingName, index)
+ *     → { file, exportedName, keys, line, col, snippet } | null
+ *
+ * v2: follow re-export chains (one hop for named `export { X } from '...'`).
+ * Barrel `export * from '...'` is not followed — only direct named re-exports.
+ */
+export function resolveObjectExport(importerAbsFile, localBindingName, index) {
+  const { importsByFile, exportsByFile, aliasesByFile, objectExportsByFile } = index;
+
+  const imports = importsByFile.get(importerAbsFile);
+  if (!imports) return null;
+  const binding = imports.get(localBindingName);
+  if (!binding) return null;
+
+  const aliases = aliasesByFile.get(importerAbsFile) ?? {};
+  const targetAbs = resolveImport(binding.module, importerAbsFile, aliases);
+  if (!targetAbs) return null;
+
+  // Direct export in target file?
+  const objExports = objectExportsByFile.get(targetAbs);
+  if (objExports) {
+    const entry = objExports.get(binding.exportedName);
+    if (entry) {
+      return { file: targetAbs, exportedName: binding.exportedName, ...entry };
+    }
+  }
+
+  // One-hop re-export: `export { X } from './m'` in the target file.
+  // v2: follow re-export chains
+  const strExports = exportsByFile.get(targetAbs);
+  if (strExports) {
+    const reexport = strExports.namedExports.get(binding.exportedName);
+    if (reexport && reexport.kind === 'reexport') {
+      const hopAliases = aliasesByFile.get(targetAbs) ?? {};
+      const hopAbs = resolveImport(reexport.module, targetAbs, hopAliases);
+      if (hopAbs) {
+        const hopExports = objectExportsByFile.get(hopAbs);
+        if (hopExports) {
+          const hopEntry = hopExports.get(reexport.originalName);
+          if (hopEntry) {
+            return { file: hopAbs, exportedName: reexport.originalName, ...hopEntry };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 /**

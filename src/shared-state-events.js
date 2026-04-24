@@ -382,6 +382,266 @@ export function analyzeProjects(projectRoots, opts = {}) {
 }
 
 /**
+ * Parse a single file and return raw bridge records — one per
+ * (listen-site, inner-dispatch-site) pair where the dispatched channel
+ * matches the listened channel and the target host is different.
+ *
+ * v1 constraints (per spec):
+ *   - Handler must be inline (ArrowFunction or FunctionExpression).
+ *   - Channel name must be statically resolvable.
+ *   - Only same-channel bridges (no rename-bridges).
+ *   - Self-bridge suppressed: both hosts in GLOBAL_HOSTS → skip.
+ */
+export function analyzeBridgeSource(code, filePath, preparsed, foldMap, crossFileResolver) {
+  const sourceFile = preparsed ?? ts.createSourceFile(
+    filePath,
+    code,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    scriptKindFor(filePath),
+  );
+  const fm = foldMap ?? buildFoldMap(sourceFile);
+  const bridges = [];
+
+  /**
+   * Walk a handler body to find all inner dispatchEvent(...) calls and
+   * return them with their host, channel info, and source location.
+   */
+  function collectInnerDispatches(handlerNode) {
+    const result = [];
+    function visit(node) {
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression;
+        let innerHost = null;
+        let isDispatch = false;
+
+        // `<expr>.dispatchEvent(...)`
+        if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'dispatchEvent') {
+          isDispatch = true;
+          const receiver = callee.expression;
+          const gHost = globalHostOf(receiver);
+          if (gHost) {
+            innerHost = 'window'; // canonical
+          } else {
+            // Walk the receiver expression to find the leftmost identifier.
+            innerHost = leftmostIdentifier(receiver);
+          }
+        }
+
+        // bare `dispatchEvent(...)`
+        if (ts.isIdentifier(callee) && callee.text === 'dispatchEvent') {
+          isDispatch = true;
+          innerHost = 'window';
+        }
+
+        if (isDispatch && innerHost !== null) {
+          const channels = extractDispatchChannels(node.arguments[0], sourceFile, fm, crossFileResolver);
+          const { line: ln, character: col } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+          const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
+          // Build toHostExpression for non-global receivers
+          let toHostExpression;
+          if (ts.isPropertyAccessExpression(callee)) {
+            const gHost = globalHostOf(callee.expression);
+            if (!gHost) {
+              toHostExpression = callee.expression.getText(sourceFile);
+            }
+          }
+          for (const ch of channels) {
+            result.push({ channel: ch, innerHost, line: ln + 1, column: col + 1, snippet, toHostExpression });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(handlerNode);
+    return result;
+  }
+
+  /**
+   * Return the leftmost identifier text in a (possibly nested) property
+   * access expression, e.g. `iframe.contentWindow` → `"iframe"`.
+   */
+  function leftmostIdentifier(node) {
+    if (ts.isIdentifier(node)) return node.text;
+    if (ts.isPropertyAccessExpression(node)) return leftmostIdentifier(node.expression);
+    if (ts.isElementAccessExpression(node)) return leftmostIdentifier(node.expression);
+    return null;
+  }
+
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      let fromHost = null;
+
+      // `<host>.addEventListener(...)`
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'addEventListener') {
+        const host = globalHostOf(callee.expression);
+        if (host) fromHost = 'window'; // canonical
+      }
+      // bare `addEventListener(...)`
+      if (ts.isIdentifier(callee) && callee.text === 'addEventListener') {
+        fromHost = 'window';
+      }
+
+      if (fromHost !== null && node.arguments.length >= 2) {
+        // Extract listen channel
+        const channelResult = extractChannelFromListenerArg(node.arguments[0], sourceFile, fm, crossFileResolver);
+        if (!channelResult.dynamic && channelResult.name !== null) {
+          const channelName = channelResult.name;
+          const handler = node.arguments[1];
+          const isInline = ts.isArrowFunction(handler) || ts.isFunctionExpression(handler);
+          if (isInline) {
+            const { line: listenLn, character: listenCol } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+            const listenSnippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
+
+            const innerDispatches = collectInnerDispatches(handler);
+            for (const d of innerDispatches) {
+              if (d.channel.dynamic || d.channel.name === null) continue;
+              if (d.channel.name !== channelName) continue; // v1: no rename-bridges
+
+              const toHost = d.innerHost;
+              // Self-bridge suppression: both in GLOBAL_HOSTS equivalence → skip
+              // fromHost is always 'window' (canonical for window/globalThis/self)
+              // toHost is 'window' if the inner dispatch was to a global host
+              if (toHost === 'window') continue; // fromHost is always 'window', so same → skip
+              // Also skip if toHost === fromHost (same non-global)
+              if (toHost === fromHost) continue;
+
+              const bridge = {
+                channel: channelName,
+                fromHost,
+                toHost,
+                listenLine: listenLn + 1,
+                listenCol: listenCol + 1,
+                listenSnippet,
+                dispatchLine: d.line,
+                dispatchCol: d.column,
+                dispatchSnippet: d.snippet,
+              };
+              if (d.toHostExpression) bridge.toHostExpression = d.toHostExpression;
+              if (channelResult.foldedFrom) bridge.foldedFrom = channelResult.foldedFrom;
+              if (channelResult.foldedFromModule) bridge.foldedFromModule = channelResult.foldedFromModule;
+              if (d.channel.aliasedFrom) bridge.aliasedFrom = d.channel.aliasedFrom;
+              bridges.push(bridge);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return bridges;
+}
+
+/**
+ * Run the bridge detector across N project roots and return findings.
+ * Mirrors the shape of analyzeProjects but returns kind: 'event-bridge'.
+ */
+export function analyzeBridgeProjects(projectRoots, opts = {}) {
+  const projects = projectRoots.map(resolveProject);
+  const exclude = opts.exclude;
+  const astCache = opts.astCache;
+  const crossFileResolver = opts.crossFileResolver;
+
+  // Group by (channel, fromHost, toHost)
+  const groups = new Map();
+  let fileCount = 0;
+  let errorCount = 0;
+
+  for (const project of projects) {
+    for (const absFile of walkSourceFiles(project.root, { exclude })) {
+      fileCount++;
+      let code;
+      let preparsed;
+      if (astCache) {
+        const cached = astCache.get(absFile);
+        if (!cached) continue;
+        code = cached.code;
+        preparsed = cached.sourceFile;
+      } else {
+        try {
+          code = readSource(absFile);
+        } catch {
+          errorCount++;
+          continue;
+        }
+      }
+      let bridges;
+      try {
+        bridges = analyzeBridgeSource(code, absFile, preparsed, null, crossFileResolver);
+      } catch {
+        errorCount++;
+        continue;
+      }
+      for (const b of bridges) {
+        const rel = path.relative(project.root, absFile);
+        const groupKey = `${b.channel}::${b.fromHost}->${b.toHost}`;
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, {
+            kind: 'event-bridge',
+            channel: b.channel,
+            fromHost: b.fromHost,
+            toHost: b.toHost,
+            occurrences: [],
+          });
+        }
+        const g = groups.get(groupKey);
+        // Listen occurrence
+        const listenOcc = {
+          project: project.id,
+          file: rel,
+          line: b.listenLine,
+          column: b.listenCol,
+          op: 'listen',
+          host: b.fromHost,
+          snippet: b.listenSnippet,
+        };
+        if (b.foldedFrom) listenOcc.foldedFrom = b.foldedFrom;
+        if (b.foldedFromModule) listenOcc.foldedFromModule = b.foldedFromModule;
+        if (b.aliasedFrom) listenOcc.aliasedFrom = b.aliasedFrom;
+        // Dispatch occurrence
+        const dispatchOcc = {
+          project: project.id,
+          file: rel,
+          line: b.dispatchLine,
+          column: b.dispatchCol,
+          op: 'dispatch',
+          host: b.toHost,
+          snippet: b.dispatchSnippet,
+          bridgedFrom: { file: rel, line: b.listenLine, column: b.listenCol },
+        };
+        if (b.toHostExpression) dispatchOcc.toHostExpression = b.toHostExpression;
+        if (b.foldedFrom) dispatchOcc.foldedFrom = b.foldedFrom;
+        if (b.foldedFromModule) dispatchOcc.foldedFromModule = b.foldedFromModule;
+        if (b.aliasedFrom) dispatchOcc.aliasedFrom = b.aliasedFrom;
+        g.occurrences.push(listenOcc, dispatchOcc);
+      }
+    }
+  }
+
+  const findings = [...groups.values()].sort((a, b) => {
+    if (a.channel !== b.channel) return a.channel < b.channel ? -1 : 1;
+    if (a.fromHost !== b.fromHost) return a.fromHost < b.fromHost ? -1 : 1;
+    return a.toHost < b.toHost ? -1 : 1;
+  });
+
+  return { findings, fileCount, errorCount };
+}
+
+/**
+ * Summarize bridge results for human display.
+ * Accepts either the raw findings array or the full result envelope
+ * { findings, fileCount, errorCount } returned by analyzeBridgeProjects.
+ */
+export function bridgeSummarize(resultOrFindings) {
+  const findings = Array.isArray(resultOrFindings) ? resultOrFindings : (resultOrFindings?.findings ?? []);
+  return [
+    `event-bridge: ${findings.length} bridge(s) across ${new Set(findings.map(f => f.channel)).size} channel(s)`,
+  ];
+}
+
+/**
  * Summarize a result for human display (stderr).
  */
 export function summarize(result) {

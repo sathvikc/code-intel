@@ -585,6 +585,16 @@ function fingerprintFor(kind, detail) {
       // that keep disagreeing does not change which channel the drift is on.
       parts.push(detail.channel ?? '');
       break;
+    case 'structural-drift':
+      // Per-export identity: the finding is "the shape contract on this
+      // exported name from this module is broken." Adding more readers
+      // that keep disagreeing does not change which export the drift is on.
+      parts.push(detail.module ?? '', detail.exportedName ?? '');
+      break;
+    case 'event-bridge':
+      parts.push(detail.channel ?? '', detail.fromHost ?? '', detail.toHost ?? '',
+                 detail.occurrences?.[0]?.file ?? '', String(detail.occurrences?.[0]?.line ?? ''));
+      break;
     case 'duplicate-static-svg-id': {
       // Per-component, per-id identity. Moving the component to a new
       // file or renaming it changes the fingerprint (different bug site);

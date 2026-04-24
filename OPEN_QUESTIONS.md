@@ -370,3 +370,13 @@ merge two logically distinct bridges if a file dispatches to both
 
 **What's needed to decide:** a real dogfood run showing false merges;
 or an AI-consumer that needs the precise target to take action safely.
+
+---
+
+## Q18 — `structural-drift` v2: function-parameter-passed objects
+
+v1 only catches exported const object literals accessed by importers. The broader P12 case — `function f(cfg) { return cfg.host; }` called from another file with `f(CFG)` — requires resolving which call-site argument maps to which parameter, which is a type-flow or whole-program call-graph problem.
+
+**Working assumption:** out of scope for v1. The exported-object shape covers the highest-signal case (config objects, shared constants) and is syntactically provable. Parameter-passing is the dominant remaining shape of P12.
+
+**What's needed to decide:** intra-file call-graph resolution landing for another detector (making reuse cheap), or the TypeChecker integration question (Q4 / Q3 track) settling enough to know whether D5 gets relaxed for any detector.

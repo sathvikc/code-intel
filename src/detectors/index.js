@@ -26,6 +26,8 @@ import * as staleCapture from '../stale-module-capture.js';
 import * as pairedKeys from '../paired-keys.js';
 import * as shapeDrift from '../shape-drift.js';
 import * as duplicateStaticSvgId from '../duplicate-static-svg-id.js';
+import * as eventBridge from '../event-bridge.js';
+import * as structuralDrift from '../structural-drift.js';
 
 /**
  * @typedef {object} DetectorEntry
@@ -145,6 +147,19 @@ export const DETECTORS = [
       `  references:      ${s.totalReferences}`,
       `  affected files:  ${s.affectedFiles}`,
     ],
+  },
+  {
+    id: 'event-bridge',
+    module: eventBridge,
+    findingKind: 'event-bridge',
+    summarize: (lines) => lines,
+  },
+  {
+    id: 'structural-drift',
+    module: structuralDrift,
+    findingKind: 'structural-drift',
+    analyzeProjects: structuralDrift.analyzeStructuralDriftProjects,
+    summarize: structuralDrift.summarize,
   },
 ];
 

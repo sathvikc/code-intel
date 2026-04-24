@@ -154,7 +154,7 @@ function storageGetItemKey(node, sourceFile, foldMap, crossFileResolver) {
  * anything that would make the shape opaque (spread, computed name,
  * method, etc.). Returns a sorted, de-duped string array.
  */
-function extractObjectLiteralKeys(expr) {
+export function extractObjectLiteralKeys(expr) {
   if (!expr || !ts.isObjectLiteralExpression(expr)) return null;
   const keys = [];
   for (const prop of expr.properties) {
@@ -286,7 +286,7 @@ function extractReadShape(parseCall, sourceFile) {
  * literal top-level keys. Returns the same { opaque, keys?, reason? }
  * shape as extractReadShape.
  */
-function extractReadShapeFromUsages(varName, bindingDecl, sourceFile) {
+export function extractReadShapeFromUsages(varName, bindingDecl, sourceFile) {
   // Enclosing scope is the innermost function-like ancestor, or the
   // SourceFile if the binding is at module scope.
   let scope = bindingDecl.parent;
