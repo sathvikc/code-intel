@@ -38,7 +38,7 @@ Planned:
 - [x] `event-bridge` — listener whose handler re-dispatches the same channel to a different host; emits a new `event-bridge` finding kind (P23); v1: inline handlers only, same-channel only, see Q15/Q16/Q17
 - [ ] `element-scoped-listener` — low-confidence listeners on non-`window` hosts, candidate-linked to same-channel window listeners (P24; ships after `event-bridge`)
 - [x] `structural-drift` — exported const object literal shape vs. importer access-shape disagreement (P12); v1: direct exports only, top-level keys only; see Q18 for parameter-passing case
-- [ ] `lifecycle-cleanup-drift` — missing `removeEventListener` / `clearInterval` / observer `.disconnect()` / `AbortController.abort()` in paired register/teardown sites (P13)
+- [x] `lifecycle-cleanup-drift` — missing teardown for addEventListener/setInterval/setTimeout/observer/WebSocket/EventSource/AbortController in same function scope (P13); three kinds: `missing-teardown`, `abort-never-called`, `handler-identity-mismatch`; v1 intra-function only
 - [ ] `side-effect-at-import` — module-top-level writes / fetches / timers / DOM mutations (P14; reuses `stale-captures` walker)
 - [ ] `shared-request-state` — mutable module-scope state reachable from request-handler entry points; SSR multi-tenancy leak (P15; depends on framework-context config / Q3)
 - [ ] `discriminated-union-drift` — string-literal union extended without updating exhaustive switch/if consumers (P16; feasibility of syntactic-only resolution still open)
