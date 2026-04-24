@@ -317,3 +317,56 @@ every analyzer's `analyzeProjects` so downstream consumers (the
 planned MCP tool Q7, the planned `trace` subcommand Q12) can use the
 same knob. See D11 for the full scope, alternatives considered, and
 reasoning.
+
+---
+
+## Q15 — `event-bridge` v2: named-function handlers
+
+v1 only catches `addEventListener(ch, <inline arrow/fn>)`. The common
+pattern `addEventListener(ch, onResize)` where `onResize` is a
+same-file function declaration or `const onResize = () => {...}` is
+not detected.
+
+**Working assumption:** skip. Detecting it requires intra-file
+callee-resolution (cheaper than Q12 tier 2 — same-file only) but is a
+distinct piece of infrastructure not needed for anything else yet.
+
+**What's needed to decide:** a real-world codebase hit where this
+pattern is the dominant shape; or the intra-file symbol-resolution
+helper landing for another detector so reuse is cheap.
+
+---
+
+## Q16 — `event-bridge` v2: rename-bridges as a distinct sub-kind
+
+v1 only emits when the listened channel name and the re-dispatched
+channel name are identical. A rename-bridge (`listen('resize-notify')`
+→ `dispatch('resize')`) is a different architectural claim and needs
+its own fingerprint identity.
+
+**Working assumption:** don't emit in v1. The cross-channel link
+requires additional signal about intentional mapping vs. unrelated
+events.
+
+**What's needed to decide:** surfacing real rename-bridge instances in
+a dogfood run; or the `event-bridge` detector maturing enough that
+"no finding" for intentional forwarding feels like a gap rather than
+correct scope.
+
+---
+
+## Q17 — `event-bridge` `toHost` verbosity: key vs. expression
+
+`toHost` is currently the **leftmost identifier** of the dispatch
+receiver (e.g. `iframe.contentWindow` → `"iframe"`). The dispatch
+occurrence carries `toHostExpression` for the full receiver text.
+This means the grouping key is on the leftmost identifier, which may
+merge two logically distinct bridges if a file dispatches to both
+`iframe1.contentWindow` and `iframe2.contentWindow`.
+
+**Working assumption:** leftmost identifier is correct for grouping
+(the claim is "this channel bridges from window to the iframe layer");
+`toHostExpression` on the occurrence gives consumers the full detail.
+
+**What's needed to decide:** a real dogfood run showing false merges;
+or an AI-consumer that needs the precise target to take action safely.

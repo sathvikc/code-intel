@@ -33,9 +33,9 @@ Planned:
 - [ ] `paired-keys` v2 — cross-cluster correlation: flag other writers that touch only one key of a known pair elsewhere in the codebase (v1 emits the intra-cluster finding only; see P10)
 - [ ] Non-web storage: `chrome.storage.*`, React Native AsyncStorage, IndexedDB, cookies, URL params (see Q4)
 - [ ] `hydration-unsafe-read` — component render path reads a browser-only global, time-varying primitive, or client-only state in a file reachable from a server-rendered entry (P11; **unvalidated** — surfaced via web research, not a lived incident; see P11 Source for evidence trail; detector likely depends on framework-context config)
-- [ ] `shared-events` v2 — alias-follow for `dispatchEvent(var)` paired with same-scope `const X = new CustomEvent('lit', ...)` (P22; shared alias infrastructure with `shape-drift` v2)
+- [x] `shared-events` v2 — alias-follow for `dispatchEvent(var)` paired with same-scope `const X = new CustomEvent('lit', ...)` (P22; shared alias infrastructure with `shape-drift` v2)
 - [ ] `shared-events` v2 — orphan-channel sub-finding (writer-only / listener-only channels, info severity)
-- [ ] `event-bridge` — listener whose handler re-dispatches the same channel to a different host; emits a new `bridge` occurrence kind (P23; depends on `shared-events` v2 alias-follow)
+- [x] `event-bridge` — listener whose handler re-dispatches the same channel to a different host; emits a new `event-bridge` finding kind (P23); v1: inline handlers only, same-channel only, see Q15/Q16/Q17
 - [ ] `element-scoped-listener` — low-confidence listeners on non-`window` hosts, candidate-linked to same-channel window listeners (P24; ships after `event-bridge`)
 - [ ] `structural-drift` — loose-typed cross-file object property drift without a serialization boundary (P12; reuses `shape-drift` AST machinery)
 - [ ] `lifecycle-cleanup-drift` — missing `removeEventListener` / `clearInterval` / observer `.disconnect()` / `AbortController.abort()` in paired register/teardown sites (P13)
