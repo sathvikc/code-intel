@@ -595,6 +595,18 @@ function fingerprintFor(kind, detail) {
       parts.push(detail.channel ?? '', detail.fromHost ?? '', detail.toHost ?? '',
                  detail.occurrences?.[0]?.file ?? '', String(detail.occurrences?.[0]?.line ?? ''));
       break;
+    case 'missing-teardown':
+      parts.push(detail.registrationKind ?? '', detail.occurrences?.[0]?.file ?? '',
+                 String(detail.occurrences?.[0]?.line ?? ''));
+      break;
+    case 'abort-never-called':
+      parts.push(detail.occurrences?.[0]?.file ?? '',
+                 String(detail.occurrences?.[0]?.line ?? ''));
+      break;
+    case 'handler-identity-mismatch':
+      parts.push(detail.channel ?? '', detail.occurrences?.[0]?.file ?? '',
+                 String(detail.occurrences?.[0]?.line ?? ''));
+      break;
     case 'duplicate-static-svg-id': {
       // Per-component, per-id identity. Moving the component to a new
       // file or renaming it changes the fingerprint (different bug site);

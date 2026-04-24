@@ -28,6 +28,7 @@ import * as shapeDrift from '../shape-drift.js';
 import * as duplicateStaticSvgId from '../duplicate-static-svg-id.js';
 import * as eventBridge from '../event-bridge.js';
 import * as structuralDrift from '../structural-drift.js';
+import * as lifecycleCleanupDrift from '../lifecycle-cleanup-drift.js';
 
 /**
  * @typedef {object} DetectorEntry
@@ -160,6 +161,19 @@ export const DETECTORS = [
     findingKind: 'structural-drift',
     analyzeProjects: structuralDrift.analyzeStructuralDriftProjects,
     summarize: structuralDrift.summarize,
+  },
+  {
+    id: 'lifecycle-cleanup-drift',
+    module: lifecycleCleanupDrift,
+    findingKind: 'lifecycle-cleanup-drift',
+    summarize: (s) => [
+      `code-intel / lifecycle-cleanup-drift`,
+      `projects:              ${s.projectCount}`,
+      `findings:              ${s.findingCount}`,
+      `  missing-teardown:    ${s.byKind['missing-teardown'] ?? 0}`,
+      `  abort-never-called:  ${s.byKind['abort-never-called'] ?? 0}`,
+      `  handler-mismatch:    ${s.byKind['handler-identity-mismatch'] ?? 0}`,
+    ],
   },
 ];
 
