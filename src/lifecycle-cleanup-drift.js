@@ -24,6 +24,7 @@ import ts from 'typescript';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
 import { readSource, scriptKindFor } from './framework-file.js';
+import { buildFoldMap, resolveStringArg } from './fold-string-literals.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'lifecycle-cleanup-drift';
@@ -42,10 +43,21 @@ const CLOSEABLE_KINDS = new Set(['WebSocket', 'EventSource']);
  * Returns an array of finding objects (missing-teardown, abort-never-called,
  * handler-identity-mismatch).
  */
-function analyzeFunctionBody(fnNode, sourceFile, project, filePath) {
+function analyzeFunctionBody(fnNode, sourceFile, project, filePath, foldMap, crossFileResolver) {
   const registrations = [];  // { kind, eventType?, varBinding?, line, col, snippet, handlerNode? }
   const teardowns = [];      // { kind, eventType?, varBinding?, line, col, snippet, handlerNode? }
   const abortControllers = new Map(); // varName → { varName, signalUsedAt:[], abortCalled:bool, line, col, snippet }
+
+  // Resolve a string argument using the same fold-aware machinery every other
+  // string-key detector uses (see D8 / D15). This lets addEventListener('foo')
+  // pair with removeEventListener('foo') AND addEventListener(EVENT_TYPE) pair
+  // with removeEventListener(EVENT_TYPE) when EVENT_TYPE is a same-file const
+  // or an imported const — the dominant pattern in real codebases.
+  function resolveEventType(node) {
+    if (!node) return null;
+    const r = resolveStringArg(node, sourceFile, foldMap, crossFileResolver);
+    return r.dynamic ? null : r.value;
+  }
 
   // Collect the set of known observer/closeable variable names so we can
   // recognise .disconnect() / .close() calls on them.
@@ -202,7 +214,7 @@ function analyzeFunctionBody(fnNode, sourceFile, project, filePath) {
 
       // --- addEventListener(type, handler) ---
       if (ts.isIdentifier(callee) && callee.text === 'addEventListener') {
-        const eventType = extractStringLiteral(args[0], sourceFile);
+        const eventType = resolveEventType(args[0]);
         const handlerNode = args[1] ?? null;
         const pos = getPos(node);
         registrations.push({
@@ -218,7 +230,7 @@ function analyzeFunctionBody(fnNode, sourceFile, project, filePath) {
         ts.isPropertyAccessExpression(callee) &&
         callee.name.text === 'addEventListener'
       ) {
-        const eventType = extractStringLiteral(args[0], sourceFile);
+        const eventType = resolveEventType(args[0]);
         const handlerNode = args[1] ?? null;
         const pos = getPos(node);
         registrations.push({
@@ -234,7 +246,7 @@ function analyzeFunctionBody(fnNode, sourceFile, project, filePath) {
 
       // --- removeEventListener(type, handler) ---
       if (ts.isIdentifier(callee) && callee.text === 'removeEventListener') {
-        const eventType = extractStringLiteral(args[0], sourceFile);
+        const eventType = resolveEventType(args[0]);
         const handlerNode = args[1] ?? null;
         const pos = getPos(node);
         teardowns.push({
@@ -249,7 +261,7 @@ function analyzeFunctionBody(fnNode, sourceFile, project, filePath) {
         ts.isPropertyAccessExpression(callee) &&
         callee.name.text === 'removeEventListener'
       ) {
-        const eventType = extractStringLiteral(args[0], sourceFile);
+        const eventType = resolveEventType(args[0]);
         const handlerNode = args[1] ?? null;
         const pos = getPos(node);
         teardowns.push({
@@ -531,17 +543,6 @@ function analyzeFunctionBody(fnNode, sourceFile, project, filePath) {
 }
 
 /**
- * Extract a string literal value from a node (shallow — no folding).
- * Returns the string or null if not a static literal.
- */
-function extractStringLiteral(node, sourceFile) {
-  if (!node) return null;
-  if (ts.isStringLiteral(node)) return node.text;
-  if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
-  return null;
-}
-
-/**
  * Check if any argument (or nested argument object property) passes
  * `<ctrl>.signal` where `<ctrl>` is a known AbortController binding.
  * Returns the controller's key name if found, null otherwise.
@@ -694,7 +695,7 @@ function collectFunctionBodies(sourceFile) {
  * @param {string} [project] - project id (defaults to basename)
  * @returns {object[]} findings
  */
-export function analyzeSource(code, filePath, preparsed, project) {
+export function analyzeSource(code, filePath, preparsed, project, crossFileResolver) {
   const sourceFile = preparsed ?? ts.createSourceFile(
     filePath,
     code,
@@ -703,10 +704,11 @@ export function analyzeSource(code, filePath, preparsed, project) {
     scriptKindFor(filePath),
   );
   const proj = project ?? path.basename(path.dirname(filePath));
+  const foldMap = buildFoldMap(sourceFile);
   const functions = collectFunctionBodies(sourceFile);
   const findings = [];
   for (const fn of functions) {
-    const fnFindings = analyzeFunctionBody(fn, sourceFile, proj, filePath);
+    const fnFindings = analyzeFunctionBody(fn, sourceFile, proj, filePath, foldMap, crossFileResolver);
     findings.push(...fnFindings);
   }
   return findings;
@@ -723,6 +725,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const astCache = opts.astCache;
+  const crossFileResolver = opts.crossFileResolver;
   const findings = [];
 
   for (const project of projects) {
@@ -743,7 +746,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       }
       let filefindings;
       try {
-        filefindings = analyzeSource(code, path.relative(project.root, absFile), preparsed, project.id);
+        filefindings = analyzeSource(code, path.relative(project.root, absFile), preparsed, project.id, crossFileResolver);
       } catch {
         continue;
       }

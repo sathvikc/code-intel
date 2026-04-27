@@ -319,3 +319,40 @@ test('nested function body is not reported for outer scope', () => {
   assert.equal(f.length, 1);
   assert.equal(f[0].registrationKind, 'addEventListener');
 });
+
+// ---------- Folding: same-file const event types pair across add/remove ----------
+
+test('addEventListener / removeEventListener pair through a same-file const event type', () => {
+  // Before fold-aware resolution, the bare extractStringLiteral helper saw
+  // RESIZE_EVENT as null on both sides, so the pairing failed and the
+  // detector emitted a missing-teardown false positive. With buildFoldMap +
+  // resolveStringArg the const folds to its literal on both sites and the
+  // pair matches.
+  const findings = run(`
+    const RESIZE_EVENT = 'resize';
+    function setup() {
+      window.addEventListener(RESIZE_EVENT, onResize);
+      window.removeEventListener(RESIZE_EVENT, onResize);
+    }
+  `);
+  const missingTeardown = findings.filter((f) => f.kind === 'missing-teardown');
+  assert.equal(missingTeardown.length, 0);
+});
+
+test('different folded consts on add/remove → registrations correctly do NOT pair', () => {
+  // Sanity: the fold actually resolves to literals (rather than treating
+  // both sides as opaque). If add and remove reference different consts
+  // that fold to different literals, they must NOT pair — i.e. the
+  // registration is reported as missing-teardown.
+  const findings = run(`
+    const ADD_EVT = 'resize';
+    const REMOVE_EVT = 'scroll';
+    function setup() {
+      window.addEventListener(ADD_EVT, onResize);
+      window.removeEventListener(REMOVE_EVT, onResize);
+    }
+  `);
+  const missingTeardown = findings.filter((f) => f.kind === 'missing-teardown');
+  assert.equal(missingTeardown.length, 1);
+  assert.equal(missingTeardown[0].occurrences[0].channel, 'resize');
+});
