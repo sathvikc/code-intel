@@ -380,3 +380,44 @@ v1 only catches exported const object literals accessed by importers. The broade
 **Working assumption:** out of scope for v1. The exported-object shape covers the highest-signal case (config objects, shared constants) and is syntactically provable. Parameter-passing is the dominant remaining shape of P12.
 
 **What's needed to decide:** intra-file call-graph resolution landing for another detector (making reuse cheap), or the TypeChecker integration question (Q4 / Q3 track) settling enough to know whether D5 gets relaxed for any detector.
+
+---
+
+## Q19 — `review-scaffold` subcommand: in scope, plugin, or external skill?
+
+**Why it matters:** dogfooding `impact` against real PRs surfaces a gap that is shaped *like* the analyzer's job but is not the same job. On a "pure component refactor" PR (no new globals / storage keys / event channels / module captures), `impact --since` correctly returns `0 findings touch the change set` — a true negative. The reviewer (human or LLM) still has work left: extracting the change scope, the test tree, the fixture-health issues, the state-coupling cascade, and the matrix-axes coverage map that the change touches. That work is mechanical (AST + git) for the first 70% and reasoning (LLM / test-run) for the last 30%. A `code-intel review-scaffold <project> --since <ref>` subcommand would emit the structured "review brief" for the mechanical 70% so a downstream LLM (or human) skips the cold-read of every diff and starts from a map.
+
+The unresolved question is *where this should live*:
+
+1. **Inside `code-intel` as a peer subcommand to `impact` and `trace`.** Reuses the existing detector registry, the import graph, the AST cache, and the per-detector occurrence machinery. The brief plugs into the JSON / markdown reporters. Risk: scope creep — the subcommand isn't a *detector*, it's a *report shape*.
+2. **As a per-stack plugin** (Recoil, Redux, Zustand, Jotai, custom store libraries) — the *stack-specific* part of the brief (selector cascade extraction, atom write graphs) is naturally pluggable. The *generic* part (change scope, test tree, fixture health) lives in core. Risk: needs the plugin / rule-pack architecture to land first (already on `BACKLOG.md` as a longer-term synthesis).
+3. **As an external "skill" file consumed by an AI assistant**, calling `code-intel impact --json` for the parts that are already covered. Lowest scope cost on `code-intel` itself. Risk: the brief's value is in the structured aggregation — pushing that to a skill means every AI context re-implements it.
+
+**Working assumption:** defer until `MCP server POC` (Q7) lands. Once MCP exposes the analyzer surface as structured tool calls, the answer becomes clearer: an LLM with MCP access can compose `impact + project graph + test extraction` without us shipping a `review-scaffold` subcommand at all. If MCP composition turns out to be too clumsy in practice, revisit option (1) or (2).
+
+**Scope guardrail:** any version of this work must stay on the project's niche. The brief emits *facts* — it never makes a pass / fail judgement. Anything that requires evaluating arbitrary TS expressions (component render output, cascade outcomes, scenario reasoning) stays off the static analyzer; it lives with the LLM or with tests.
+
+**What's needed to decide:** whether MCP composition (Q7) covers the use case naturally, or whether the brief's structured aggregation is uniquely worth building as a peer subcommand. Also: whether real users want this, or whether the demand is hypothetical.
+
+---
+
+## Q20 — File-context classifier: shared infrastructure or per-detector helpers?
+
+**Why it matters:** several BACKLOG noise-reduction items share an underlying need: classify each source file as `production`, `test`, `build-artifact` (minified / vendor bundle), or `unknown`, so detectors can either skip or weight occurrences accordingly. Concretely:
+
+- `Skip minified / bundled files at file-discovery time` (file walker layer).
+- `Default-exclude test-context files from cross-file thresholds` (per-detector or per-occurrence layer).
+- `Test-context-aware confidence scoring` (already on BACKLOG; same classification).
+
+The question is whether these share one classifier or stay separate.
+
+**Two shapes:**
+
+1. **Shared `src/file-context.js` module** with a single `classify(filePath, sampleBytes?) → { kind, reasons[] }` function consulted by the file walker and every detector. Detectors decide what to do with the answer (drop, demote, annotate). One source of truth; one place to add new heuristics (e.g. recognise `cypress/` directories).
+2. **Per-detector helpers, no shared module.** Each detector inlines the regex it needs. Cheaper today; risks divergence (the same Jest-setup regex, copy-pasted into every detector, drifts when new test runners appear).
+
+**Working assumption:** lean toward (1) once a second detector needs the classification. Until then, the file-discovery skip for minified bundles is a one-off and lives in `src/project.js`. When the in-detector test filter lands, lift the helper to a shared module rather than copying the regex.
+
+**Scope:** this question is product-facing because the *output schema* may carry the classification on each occurrence (`occurrence.context: 'production' | 'test' | 'build-artifact' | 'unknown'`). That's a schema decision, not just an implementation detail.
+
+**What's needed to decide:** whether the schema benefits from per-occurrence `context` (yes, per the dogfood report — preserves visibility for users who want test-only collisions surfaced under a separate kind), and whether more than two detectors end up needing the helper. If the answer to either is yes, the shared module wins.

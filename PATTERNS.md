@@ -285,6 +285,19 @@ recall anchor when revisiting months later.
 - **Detector:** not-yet-built. Candidate name: `element-scoped-listener`. Emitted at low confidence; secondary candidate-link uses same-channel matching against window-scoped listeners.
 - **Source:** dogfood on a real codebase — the same nav case that motivated P22 and P23. Element-scoped listeners were truly invisible; surfacing them at low confidence would have given a reviewer the missing piece to reason about bridging without forcing the detector to claim a hard coupling.
 
+## P25 — Nullable-callable binding called after reset
+
+- **Symptoms:** `TypeError: <name> is not a function`, surfacing only on a specific lifecycle sequence (open → close → dispose, mount → cleanup → teardown, show → hide → unmount, init → reinit → destroy). Dev and unit tests miss it because the triggering sequence is rare; production hits it the first time the relevant edge case fires. The error often points at a teardown / cleanup callback that was registered earlier in the lifecycle.
+- **Root cause:** a `let` binding holds a callable. The lifecycle has at least three independent paths that touch it: an *open path* that reassigns the binding to a real callable, a *close path* that runs the callable then resets the binding to `null` (or `undefined`), and a *dispose path*, registered earlier as a callback, that calls the binding without a guard. After `open → close → dispose`, the dispose callback sees `null` and crashes. Each path looks correct in isolation; the bug is the interaction. The fix is invariably a single guard at the dispose call site (`typeof X === 'function' && X()`, `X?.()`, or `X && X()`).
+- **Static signal:** in a single function or module scope, all three of the following:
+  1. A `let` binding is initialised to a callable (arrow, function expression, or a call whose return type plausibly is a function).
+  2. The same binding is later assigned to `null` or `undefined` somewhere in the scope.
+  3. The same binding is called somewhere in the scope without a guard. Guards that count: `if (X)`, `if (typeof X === 'function')`, `X?.()`, `X && X()`, ternary on `X`. Anything else is unguarded.
+- **What this will NOT catch in v1:** type-inferred callables (need the TS checker — out per D5); cross-function reset/call splits that travel through closures or registered callbacks defined in a different file; reassignments that logically can't coincide with the unguarded call path (over-approximates per D2).
+- **Confidence tiers:** `medium` by default; promote to `high` when the null assignment and the unguarded call live in distinct lifecycle callbacks whose names match the catalogue `dispose`, `cleanup`, `teardown`, `close`, `unmount`, `destroy`. The lexical co-location of *reset → callback-defined-elsewhere → call* is the fingerprint of the real bug.
+- **Detector:** not-yet-built. Candidate name: `nullable-callable-binding`. Reuses the function-scope walker already in `stale-module-capture.js` and `lifecycle-cleanup-drift.js`. **Hold the build until a second independent real-world instance is observed** — one instance documents a pattern; per D2 / D10 we wait for a second instance before committing detector code.
+- **Source:** real production incident on a long-lived widget with open / close / dispose lifecycle phases that ran in different orders depending on user interaction. The dispose callback fired after the close path had nulled the cleanup binding; the unguarded call crashed only on that sequence. Fix was a `typeof === 'function'` guard at the dispose site.
+
 ## Adding a new entry
 
 When the product owner shares a new bug (narrative form, LinkedIn post,

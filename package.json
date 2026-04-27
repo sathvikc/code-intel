@@ -1,6 +1,6 @@
 {
   "name": "code-intel",
-  "version": "0.28.8",
+  "version": "0.28.9",
   "description": "Static analyzer that finds the coupling your import graph can't see.",
   "type": "module",
   "private": true,
