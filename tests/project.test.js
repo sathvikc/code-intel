@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   resolveProject,
   walkSourceFiles,
+  classifyBuildArtifact,
   SOURCE_EXTENSIONS,
   IGNORED_DIRS,
 } from '../src/project.js';
@@ -188,6 +189,48 @@ test('walkSourceFiles: a glob that matches nothing is a no-op', () => {
   const excluded = [...walkSourceFiles(root, { exclude: ['**/nothing-here/**'] })]
     .map(f => path.relative(root, f)).sort();
   assert.deepEqual(excluded, baseline);
+});
+
+// ---------- walkSourceFiles: build-artifact skipping ----------
+
+test('walkSourceFiles skips a *.min.js file by default', () => {
+  const root = mktmp();
+  write(root, 'src/real.js', 'const x = 1;');
+  write(root, 'src/foo.min.js', 'const x=1;');
+  const files = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'real.js')]);
+});
+
+test('walkSourceFiles skips files under a vendor/ directory by default', () => {
+  const root = mktmp();
+  write(root, 'src/real.js', 'const x = 1;');
+  write(root, 'public/vendor/lib.js', 'const x = 1;');
+  const files = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'real.js')]);
+});
+
+test('walkSourceFiles skips a file whose first line exceeds the long-line threshold', () => {
+  const root = mktmp();
+  write(root, 'src/real.js', 'const x = 1;');
+  write(root, 'public/bundle.js', ';'.repeat(2000));
+  const files = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'real.js')]);
+});
+
+test('walkSourceFiles with includeBuildArtifacts: true yields all files', () => {
+  const root = mktmp();
+  write(root, 'src/real.js', 'const x = 1;');
+  write(root, 'src/foo.min.js', 'const x=1;');
+  write(root, 'public/vendor/lib.js', 'const x = 1;');
+  write(root, 'public/bundle.js', ';'.repeat(2000));
+  const files = [...walkSourceFiles(root, { includeBuildArtifacts: true })]
+    .map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [
+    path.join('public', 'bundle.js'),
+    path.join('public', 'vendor', 'lib.js'),
+    path.join('src', 'foo.min.js'),
+    path.join('src', 'real.js'),
+  ]);
 });
 
 // ---------- exported constants ----------

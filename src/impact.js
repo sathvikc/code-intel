@@ -887,6 +887,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const maxDepth = opts.maxDepth ?? 6;
   const exclude = opts.exclude;
+  const includeBuildArtifacts = opts.includeBuildArtifacts;
   // One cache for the whole run. Each source file is read + parsed on first
   // touch and reused by every subsequent detector and by import-graph. The
   // cache is deliberately per-run: no cross-run persistence, no content
@@ -910,7 +911,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   let crossFileResolver = null;
   if (astCache) {
     const resolvedProjects = projectRoots.map(resolveProject);
-    const constantsIndex = buildConstantsIndex(resolvedProjects, { astCache, exclude });
+    const constantsIndex = buildConstantsIndex(resolvedProjects, { astCache, exclude, includeBuildArtifacts });
     crossFileResolver = makeCrossFileResolver(constantsIndex);
   }
 
@@ -932,7 +933,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   //    up the right `findingKind` wrapper label without a second map.
   const detectorResults = detectors.map((d) => ({
     detector: d,
-    result: d.module.analyzeProjects(projectRoots, { exclude, astCache, crossFileResolver }),
+    result: d.module.analyzeProjects(projectRoots, { exclude, astCache, crossFileResolver, includeBuildArtifacts }),
   }));
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
@@ -968,7 +969,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // 5. Blast radius, if we have a change set.
   let blastRadius = null;
   if (changedFilesAbs && changedFilesAbs.size > 0) {
-    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude, astCache });
+    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude, astCache, includeBuildArtifacts });
     blastRadius = graphResult.dependents.map((d) => ({
       file: d.file,
       project: projectIdFor(d.file, rootById),

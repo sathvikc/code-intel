@@ -47,6 +47,40 @@ export function resolveProject(root) {
   return { id, root: abs };
 }
 
+const BUILD_ARTIFACT_FILENAME_RE = /\.(min)\.(?:js|mjs|cjs)$/i;
+const BUILD_ARTIFACT_DIR_RE = /(^|[\\/])(?:vendor|vendors|bundle|bundles|chunks)(?:[\\/]|$)/i;
+const LONG_LINE_THRESHOLD = 1000;
+const SAMPLE_BYTES = 4096;
+
+export function classifyBuildArtifact(filePath) {
+  if (BUILD_ARTIFACT_FILENAME_RE.test(filePath)) {
+    return { kind: 'build-artifact', reason: 'filename-min' };
+  }
+  if (BUILD_ARTIFACT_DIR_RE.test(filePath)) {
+    return { kind: 'build-artifact', reason: 'ancestor-dir' };
+  }
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(SAMPLE_BYTES);
+    const bytesRead = fs.readSync(fd, buf, 0, SAMPLE_BYTES, 0);
+    if (bytesRead === 0) return null;
+    const head = buf.toString('utf8', 0, bytesRead);
+    const firstNewline = head.indexOf('\n');
+    const firstLineLen = firstNewline === -1 ? bytesRead : firstNewline;
+    if (firstLineLen >= LONG_LINE_THRESHOLD) {
+      return { kind: 'build-artifact', reason: 'long-first-line' };
+    }
+  } catch {
+    // unreadable file → fall through, let the parser fail with its own error path
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+  }
+  return null;
+}
+
 /**
  * Walk a directory and yield absolute paths to source files worth parsing.
  *
@@ -88,6 +122,7 @@ export function* walkSourceFiles(root, opts = {}) {
       } else if (e.isFile()) {
         if (!SOURCE_EXTENSIONS.has(path.extname(e.name))) continue;
         if (matchesAnyGlob(rel, excludes)) continue;
+        if (!opts.includeBuildArtifacts && classifyBuildArtifact(full)) continue;
         yield full;
       }
     }

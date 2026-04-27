@@ -35,16 +35,16 @@ const ANALYZER_COMMANDS = Object.fromEntries(
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--baseline <path>] [--markdown|--json] [--pretty] [--exclude <path>]
-                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats]
+                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
-                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>]
-  code-intel shared-state    [paths...] [--pretty] [--exclude <path>]
-  code-intel shared-events   [paths...] [--pretty] [--exclude <path>]
-  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>]
-  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>]
-  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>]
-  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>]
-  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>]
+                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel shared-state    [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel shared-events   [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -116,6 +116,11 @@ Options:
                   Hardcoded ignores (node_modules, dist, build, .git,
                   coverage, .next, .turbo, .cache) always apply on top and
                   cannot be overridden.
+  --include-build-artifacts
+                  Re-enable walking files that are classified as build
+                  artifacts (*.min.js, files under vendor/vendors/bundle/
+                  bundles/chunks directories, files whose first line exceeds
+                  1000 characters). Default: off (artifacts are skipped).
   --only <ids>    (impact only) comma-separated detector ids to run; other
                   detectors are skipped entirely (not just filtered post-hoc).
                   Repeatable. Unknown ids fail fast.
@@ -135,7 +140,7 @@ Options:
 `;
 
 function parseCommonArgs(argv) {
-  const args = { paths: [], pretty: false, help: false, exclude: [] };
+  const args = { paths: [], pretty: false, help: false, exclude: [], includeBuildArtifacts: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--pretty') args.pretty = true;
@@ -145,6 +150,7 @@ function parseCommonArgs(argv) {
       if (!v) throw new Error(`--exclude requires a value`);
       args.exclude.push(v);
     }
+    else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -168,6 +174,7 @@ function parseImpactArgs(argv) {
     pretty: false,
     help: false,
     exclude: [],
+    includeBuildArtifacts: false,
     only: [],
     skip: [],
     noCache: false,
@@ -185,6 +192,7 @@ function parseImpactArgs(argv) {
       if (!v) throw new Error(`--exclude requires a value`);
       args.exclude.push(v);
     }
+    else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
     else if (a === '--baseline') {
       const v = argv[++i];
       if (!v) throw new Error(`--baseline requires a path to a prior impact --json output`);
@@ -236,6 +244,7 @@ async function runImpact(argv) {
   const result = impact.analyzeProjects(args.paths, {
     since: args.since,
     exclude: args.exclude,
+    includeBuildArtifacts: args.includeBuildArtifacts,
     only: args.only.length > 0 ? args.only : undefined,
     skip: args.skip.length > 0 ? args.skip : undefined,
     noCache: args.noCache || undefined,
@@ -295,6 +304,7 @@ function parseTraceArgs(argv) {
     pretty: false,
     help: false,
     exclude: [],
+    includeBuildArtifacts: false,
   };
   const setTarget = (t) => {
     if (args.target) {
@@ -334,6 +344,7 @@ function parseTraceArgs(argv) {
       if (!v) throw new Error(`--exclude requires a value`);
       args.exclude.push(v);
     }
+    else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -363,11 +374,12 @@ async function runTrace(argv) {
   if (args.target.kind === 'storage') {
     result = trace.traceStorage(args.paths, args.target.backend, args.target.name, {
       exclude: args.exclude,
+      includeBuildArtifacts: args.includeBuildArtifacts,
     });
   } else if (args.target.kind === 'event') {
-    result = trace.traceEvent(args.paths, args.target.name, { exclude: args.exclude });
+    result = trace.traceEvent(args.paths, args.target.name, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts });
   } else {
-    result = trace.traceGlobal(args.paths, args.target.name, { exclude: args.exclude });
+    result = trace.traceGlobal(args.paths, args.target.name, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts });
   }
 
   if (args.format === 'mermaid') {
@@ -393,7 +405,7 @@ async function runAnalyzer(sub, argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude });
+  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts });
   const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
   process.stdout.write(json + '\n');
   const summary = cmd.analyzer.summarize(result);

@@ -246,6 +246,7 @@ function isBinaryAssignment(kind) {
 export function analyzeStructuralDriftProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
+  const includeBuildArtifacts = opts.includeBuildArtifacts;
   const astCache = opts.astCache;
 
   // Build a constants index that includes objectExportsByFile.
@@ -261,7 +262,7 @@ export function analyzeStructuralDriftProjects(projectRoots, opts = {}) {
 
   // ---------- Pass 1 & 2: walk all files ----------
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root, { exclude })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
       fileCount++;
 
       // Parse or use cached AST.
