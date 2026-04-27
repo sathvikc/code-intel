@@ -57,7 +57,7 @@
 // / integrations. Per D2, we lean recall-first: every finding ships; the
 // `touchesChange` boolean and `severity` heuristic let consumers filter.
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -836,7 +836,11 @@ function fingerprintFor(kind, detail) {
  */
 export function gitChangedFiles(cwd, base) {
   try {
-    const out = execSync(`git diff --name-only ${base}`, {
+    // Use execFileSync (argv array) instead of execSync (single shell
+    // string). The --since ref is user-supplied; with execSync, shell
+    // metacharacters in `base` would be interpreted by /bin/sh. With
+    // execFileSync, `base` is passed verbatim as a single argument to git.
+    const out = execFileSync('git', ['diff', '--name-only', base], {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
