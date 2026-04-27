@@ -91,7 +91,7 @@ Options:
                   and marked; blast radius is computed.
   --baseline <path>
                   (impact only) Path to a prior impact --json output. When set,
-                  computes a fingerprint-keyed diff and adds a `diff` key to the
+                  computes a fingerprint-keyed diff and adds a 'diff' key to the
                   JSON output (new / resolved / unchanged finding arrays). In
                   markdown mode, prepends a diff summary section.
   --markdown      (impact only) Emit markdown report (default when --since is set
