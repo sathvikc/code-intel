@@ -70,6 +70,21 @@ Planned:
 - [ ] `trace --layout star|flow|grouped` — writers / hub / readers split with file-group subgraphs; default `grouped` for N > 5
 - [ ] Test-context-aware confidence scoring — weight production occurrences higher than test occurrences; depends on glob `--exclude` above or framework-context config (see Q3)
 
+## Code health / maintainability
+
+Items surfaced by an internal audit pass (`technical_audit.md`, kept locally; not committed). Listed here so the surface stays discoverable without growing a separate doc file:
+
+- [ ] Consolidate duplicated `isFunctionLike` helper (3 copies: `fold-string-literals.js`, `shape-drift.js`, `paired-keys.js`) — export once, import three times
+- [ ] Consolidate duplicated `isAssignmentOperator` helper (3 copies) — and **fix recall gap** in `shared-state-globals.js` which is missing 4 operators (`**=`, `<<=`, `>>=`, `>>>=`); compound-assignment writes on those operators are silently not flagged today
+- [ ] Consolidate duplicated `collectReassignedNames` (2 copies: `fold-string-literals.js`, `cross-file-constants.js`); the comment claiming an import-cycle blocker in `cross-file-constants.js` is stale — there is no cycle
+- [ ] Consolidate duplicated `storageNameOf` helper (3 copies: `shared-state-web-storage.js`, `shape-drift.js`, `paired-keys.js`)
+- [ ] Drop the `g` flag from module-level `URL_REF_PATTERN` in `duplicate-static-svg-id.js` — the live `extractReferencedIds` already creates a fresh RegExp per call; the constant's `g` flag is misleading and a foot-gun for any future caller that uses it directly
+- [ ] Replace `execSync` in `gitChangedFiles` with an async `execFile` + make `analyzeProjects` async; lifts the event-loop block on large `--since` diffs; orthogonal to the security fix already shipped in this branch
+- [ ] Reduce `fs.existsSync` + `fs.statSync` calls in `import-graph.js#firstExistingCandidate` (currently up to 18 syscalls per import specifier) to a single `try { statSync } catch` per candidate
+- [ ] Normalise path separators between `impact.js#projectIdFor` (`path.sep`) and `report-markdown.js` (hardcoded `/`) for Windows compatibility
+- [ ] Tighten `walkSourceFiles` hidden-dir handling — currently only `.git` is pruned among dotfile dirs, others (`.vscode`, `.idea`, `.husky`) are walked but yield no source files (extension filter catches them)
+- [ ] Fix `scripts/version-bump.js` main-guard for Windows — the current `import.meta.url === "file://" + process.argv[1]` shape always evaluates false on Windows because of forward-vs-back-slash mismatch; use `pathToFileURL` from `node:url` instead
+
 ## Orchestration (commodity tools)
 
 - [ ] Knip integration (dead code)
