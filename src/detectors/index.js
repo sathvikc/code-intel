@@ -159,8 +159,14 @@ export const DETECTORS = [
     id: 'structural-drift',
     module: structuralDrift,
     findingKind: 'structural-drift',
-    analyzeProjects: structuralDrift.analyzeStructuralDriftProjects,
-    summarize: structuralDrift.summarize,
+    // structuralDrift.summarize already returns a lines array; the
+    // per-analyzer CLI dispatcher applies the registry's `summarize` to
+    // the module's summary output, so this is identity (matches the
+    // event-bridge pattern). The previous form re-applied
+    // structuralDrift.summarize to its own output, which produced an
+    // off-by-N count because the function is overloaded over arrays /
+    // result envelopes.
+    summarize: (lines) => lines,
   },
   {
     id: 'lifecycle-cleanup-drift',

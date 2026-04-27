@@ -36,7 +36,6 @@
 // Finding kind: "shared-global-binding"
 
 import ts from 'typescript';
-import fs from 'node:fs';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
 import { readSource, scriptKindFor } from './framework-file.js';
