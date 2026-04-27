@@ -1062,12 +1062,31 @@ function wrap(kind, detail, rootById, changedFilesAbs) {
  * output (i.e. already-wrapped objects with a `fingerprint` field).
  */
 export function computeDiff(currentFindings, baselineFindings) {
-  const baselineByFp = new Map(
-    (baselineFindings ?? []).map((f) => [f.fingerprint, f])
-  );
-  const currentByFp = new Map(
-    (currentFindings ?? []).map((f) => [f.fingerprint, f])
-  );
+  // Build fingerprint -> finding maps for O(1) membership checks, and
+  // surface any fingerprint collision to stderr. Two findings sharing a
+  // fingerprint is unlikely with a 64-bit hash but not impossible; if it
+  // happens, the diff would silently undercount findings on whichever
+  // side the collision lives. Warn so the user knows the diff is fuzzy.
+  const baselineByFp = new Map();
+  for (const f of baselineFindings ?? []) {
+    if (baselineByFp.has(f.fingerprint)) {
+      process.stderr.write(
+        `code-intel/impact --baseline: warning: duplicate fingerprint ${f.fingerprint} in baseline (`
+        + `${f.kind}); the diff may undercount findings on that key.\n`,
+      );
+    }
+    baselineByFp.set(f.fingerprint, f);
+  }
+  const currentByFp = new Map();
+  for (const f of currentFindings ?? []) {
+    if (currentByFp.has(f.fingerprint)) {
+      process.stderr.write(
+        `code-intel/impact --baseline: warning: duplicate fingerprint ${f.fingerprint} in current run (`
+        + `${f.kind}); the diff may undercount findings on that key.\n`,
+      );
+    }
+    currentByFp.set(f.fingerprint, f);
+  }
 
   const added = [];
   const unchanged = [];

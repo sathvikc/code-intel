@@ -82,6 +82,36 @@ describe('computeDiff', () => {
     assert.equal(diff.unchanged.length, 2);
   });
 
+  it('fingerprint collision warning — duplicate fingerprints in current run emit a stderr warning', () => {
+    // Capture stderr writes during the call.
+    const captured = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => { captured.push(String(chunk)); return true; };
+    try {
+      computeDiff([mkFinding('dupe'), mkFinding('dupe')], []);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    const warnings = captured.filter((s) => s.includes('duplicate fingerprint'));
+    assert.equal(warnings.length, 1, 'one warning expected per duplicate fingerprint');
+    assert.match(warnings[0], /current run/);
+    assert.match(warnings[0], /dupe/);
+  });
+
+  it('fingerprint collision warning — duplicate fingerprints in baseline emit a stderr warning', () => {
+    const captured = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => { captured.push(String(chunk)); return true; };
+    try {
+      computeDiff([], [mkFinding('dupe'), mkFinding('dupe')]);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    const warnings = captured.filter((s) => s.includes('duplicate fingerprint'));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /baseline/);
+  });
+
   it('event-shape-drift fingerprint stability — two identical detail objects produce the same fingerprint', () => {
     // Test indirectly: run analyzeProjects twice on the same fixture and
     // verify that event-shape-drift findings (if any) have stable fingerprints.
