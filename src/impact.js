@@ -99,6 +99,37 @@ function severityFor(kind, detail) {
       if ((detail.readOnlyKeys?.length ?? 0) > 0) return 'critical';
       return 'warning';
     }
+    case 'event-shape-drift': {
+      // Same bug class as shape-drift, different boundary (CustomEvent.detail
+      // instead of JSON.stringify/getItem). Listener accessing a field no
+      // dispatcher emits → undefined-property-access crash shape; cross-project
+      // bumps to critical.
+      const projects = new Set(detail.occurrences.map((o) => o.project));
+      if (projects.size > 1) return 'critical';
+      if ((detail.readOnlyKeys?.length ?? 0) > 0) return 'critical';
+      return 'warning';
+    }
+    case 'structural-drift': {
+      // v1 only emits when readOnlyKeys is non-empty (see structural-drift.js
+      // emission rule), so the reader-accesses-undeclared-field case is the
+      // only shape we see. Cross-project escalates to critical.
+      const projects = new Set(detail.occurrences.map((o) => o.project));
+      if (projects.size > 1) return 'critical';
+      return 'warning';
+    }
+    case 'event-bridge':
+      // Bridges are coupling claims (one host's event re-dispatched to
+      // another host) — not always bugs, but always worth a reviewer's eye
+      // because they create implicit cross-host listeners that are easy to
+      // miss when refactoring either side.
+      return 'warning';
+    case 'missing-teardown':
+    case 'abort-never-called':
+    case 'handler-identity-mismatch':
+      // Lifecycle leaks: silent in dev, accumulate in long-running runtimes
+      // (SPA, workers, Node services). Warning by default; reviewer judges
+      // whether the enclosing scope is short-lived enough to ignore.
+      return 'warning';
     case 'duplicate-static-svg-id':
       // User-visible rendering corruption (gradients, filters, masks), not
       // data loss. Warning tier is right: the bug is bad but bounded.
@@ -145,6 +176,18 @@ function confidenceFor(kind, detail) {
       return confidencePairedKeys(detail);
     case 'shape-drift':
       return confidenceShapeDrift(detail);
+    case 'event-shape-drift':
+      return confidenceEventShapeDrift(detail);
+    case 'structural-drift':
+      return confidenceStructuralDrift(detail);
+    case 'event-bridge':
+      return confidenceEventBridge(detail);
+    case 'missing-teardown':
+      return confidenceMissingTeardown(detail);
+    case 'abort-never-called':
+      return confidenceAbortNeverCalled(detail);
+    case 'handler-identity-mismatch':
+      return confidenceHandlerIdentityMismatch(detail);
     case 'duplicate-static-svg-id':
       return confidenceDuplicateSvgId(detail);
     default:
@@ -347,6 +390,142 @@ function confidenceDuplicateSvgId(detail) {
   };
 }
 
+function confidenceEventShapeDrift(detail) {
+  // Mirrors confidenceShapeDrift's tiering. event-shape-drift only emits
+  // when BOTH dispatch and listen sides have ≥1 literal shape AND the
+  // unions disagree, so the factual claim is always true; confidence
+  // modulates on which kind of drift it is.
+  const readOnly = detail.readOnlyKeys ?? [];
+  const writeOnly = detail.writeOnlyKeys ?? [];
+  const opaqueNote = (detail.opaqueWrites || detail.opaqueReads)
+    ? ` Note: ${detail.opaqueWrites} dispatcher site(s) and ${detail.opaqueReads} listener site(s) are opaque `
+      + '(the analyzer couldn\'t resolve their detail shape — e.g. a non-literal detail object, '
+      + 'a destructure into a name the analyzer couldn\'t walk); they are listed in occurrences '
+      + 'but did not contribute to the shape union.'
+    : '';
+  if (readOnly.length > 0) {
+    return {
+      confidence: 'high',
+      reason:
+        `Listener accesses [${readOnly.map((k) => `'${k}'`).join(', ')}] on CustomEvent channel '${detail.channel}', `
+        + 'but no dispatcher emits these keys in `event.detail`. At runtime the listener will see '
+        + '`undefined` for these fields and either crash on a property access or silently fall through. '
+        + 'CustomEvent.detail has no type-level contract; TypeScript and linters do not see across the '
+        + 'dispatch boundary.'
+        + opaqueNote,
+    };
+  }
+  return {
+    confidence: 'medium',
+    reason:
+      `Dispatcher emits [${writeOnly.map((k) => `'${k}'`).join(', ')}] in event.detail on CustomEvent channel `
+      + `'${detail.channel}' that no visible listener reads. Weaker than the listener-sees-undefined case — `
+      + 'these fields may be dead payload, or a listener the analyzer did not scan (an inline-script '
+      + 'handler, a wrapper, a different repo) may still depend on them. Verify before dropping.'
+      + opaqueNote,
+  };
+}
+
+function confidenceStructuralDrift(detail) {
+  // Per the v1 emission rule, only readOnlyKeys-non-empty findings reach
+  // here (importer accesses fields the export doesn't declare). The factual
+  // claim is always true — confidence mostly tracks blast radius.
+  const readOnly = detail.readOnlyKeys ?? [];
+  const projects = new Set(detail.occurrences.map((o) => o.project));
+  const opaqueNote = detail.opaqueReaders
+    ? ` Note: ${detail.opaqueReaders} reader site(s) had partial / opaque access patterns the analyzer could not fully resolve.`
+    : '';
+  if (projects.size > 1) {
+    return {
+      confidence: 'high',
+      reason:
+        `Importer in another project accesses [${readOnly.map((k) => `'${k}'`).join(', ')}] on `
+        + `\`${detail.exportedName}\` from ${detail.module}, but the export does not declare these keys. `
+        + 'Cross-project structural drift on a shared object — refactor on the declaring side silently '
+        + 'breaks the importer; TypeScript only catches this when the export has a tight literal type.'
+        + opaqueNote,
+    };
+  }
+  return {
+    confidence: 'high',
+    reason:
+      `Importer accesses [${readOnly.map((k) => `'${k}'`).join(', ')}] on \`${detail.exportedName}\` from `
+      + `${detail.module}, but the export does not declare these keys. The reader will see \`undefined\` `
+      + 'at runtime and either crash on chained access or silently fall through. The export site and '
+      + 'reader site need to agree on the key set.'
+      + opaqueNote,
+  };
+}
+
+function confidenceEventBridge(detail) {
+  // A bridge is a coupling claim, not a bug claim — the listener
+  // intentionally re-dispatches to a different host. Worth flagging because
+  // refactoring either side without the other silently severs the bridge.
+  return {
+    confidence: 'medium',
+    reason:
+      `CustomEvent channel '${detail.channel}' is bridged from ${detail.fromHost} to ${detail.toHost} — `
+      + 'a listener on one host re-dispatches the same channel to another host, creating an implicit '
+      + 'cross-host coupling. The bridge itself is usually intentional (iframe / worker / popup '
+      + 'communication), but any refactor that removes the listener silently breaks consumers on the '
+      + 'other side, and any change to the detail shape now has two reader populations to update.',
+  };
+}
+
+function confidenceMissingTeardown(detail) {
+  // The detector requires the registration to be observed AND no matching
+  // teardown reachable in the same function body. The factual claim is
+  // strong; confidence mostly modulates on registration kind.
+  const regKind = detail.registrationKind ?? 'unknown';
+  // setTimeout is often intentionally one-off (no teardown needed for the
+  // happy path — the timer fires and is gone). The other kinds always
+  // accumulate when a function is re-run.
+  if (regKind === 'setTimeout') {
+    return {
+      confidence: 'medium',
+      reason:
+        'setTimeout registered with no clearTimeout reachable in the same function body. Often this is '
+        + 'intentional (a one-off scheduled action), but if the enclosing function can be re-invoked '
+        + 'before the timer fires (React effect re-run, route change, repeated user action), the un-cleared '
+        + 'timer leaks state into the next invocation. Verify the enclosing scope is single-shot.',
+    };
+  }
+  return {
+    confidence: 'high',
+    reason:
+      `${regKind} registered with no matching teardown reachable in the same function body. In runtimes `
+      + 'where the enclosing function can be re-invoked (React effect re-run, SPA navigation, repeated '
+      + 'setup), each invocation accumulates another live registration — silent memory leak and '
+      + 'duplicated handler firing. The cleanup-return pattern (returning a teardown function from a '
+      + 'useEffect / disposer) is recognised; if the registration genuinely outlives the function, the '
+      + 'fix is usually to hoist it to a one-shot init path.',
+  };
+}
+
+function confidenceAbortNeverCalled(detail) {
+  return {
+    confidence: 'high',
+    reason:
+      'An `AbortController` was constructed and its `.signal` was passed to ≥1 fetch / addEventListener / '
+      + 'subscriber call, but `.abort()` is never invoked anywhere in the same function body. The signal '
+      + 'is therefore wired up but never fired — the controller is dead-weight, and the operations it '
+      + 'gates will never be cancelled. Either remove the controller or wire `.abort()` into the teardown '
+      + 'path.',
+  };
+}
+
+function confidenceHandlerIdentityMismatch(detail) {
+  return {
+    confidence: 'high',
+    reason:
+      `\`addEventListener('${detail.channel ?? '?'}', X)\` is paired with \`removeEventListener('${detail.channel ?? '?'}', Y)\` `
+      + 'in the same function body, where X and Y are provably different references (different inline '
+      + 'arrow / function literal, different bound method, etc.). `removeEventListener` matches by '
+      + 'reference equality, so the remove call is silently a no-op — the handler stays attached forever. '
+      + 'Fix by hoisting the handler to a stable variable and passing the same reference to both calls.',
+  };
+}
+
 function confidenceShapeDrift(detail) {
   // shape-drift only emits when BOTH sides have at least one literal
   // shape observation AND the aggregated shapes disagree — so the
@@ -444,6 +623,31 @@ function messageFor(kind, detail) {
       }
       return `${detail.storage}['${detail.key}']: writer stores [${fmt(wo)}] that no reader accesses`;
     }
+    case 'event-shape-drift': {
+      const wo = detail.writeOnlyKeys ?? [];
+      const ro = detail.readOnlyKeys ?? [];
+      const fmt = (arr) => arr.map((k) => `'${k}'`).join(', ');
+      if (ro.length > 0 && wo.length > 0) {
+        return `CustomEvent '${detail.channel}': dispatcher emits [${fmt(wo)}] but listener accesses [${fmt(ro)}] — detail shape drift`;
+      }
+      if (ro.length > 0) {
+        return `CustomEvent '${detail.channel}': listener accesses [${fmt(ro)}] that no dispatcher emits`;
+      }
+      return `CustomEvent '${detail.channel}': dispatcher emits [${fmt(wo)}] that no listener reads`;
+    }
+    case 'structural-drift': {
+      const ro = detail.readOnlyKeys ?? [];
+      const fmt = (arr) => arr.map((k) => `'${k}'`).join(', ');
+      return `\`${detail.exportedName}\` from ${detail.module}: importer accesses [${fmt(ro)}] not declared on the export${crossProj}`;
+    }
+    case 'event-bridge':
+      return `CustomEvent '${detail.channel}' bridged ${detail.fromHost} → ${detail.toHost}${crossProj}`;
+    case 'missing-teardown':
+      return `${detail.registrationKind ?? '<unknown>'} registered with no matching teardown in the same function body`;
+    case 'abort-never-called':
+      return `AbortController constructed and .signal used, but .abort() is never called`;
+    case 'handler-identity-mismatch':
+      return `addEventListener / removeEventListener for '${detail.channel ?? '?'}' use different handler references — remove is a silent no-op`;
     default:
       return 'finding';
   }
@@ -731,14 +935,21 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const rootById = new Map(projects.map((p) => [p.id, p.root]));
 
-  // 3. Wrap each finding into the unified envelope, using the registry's
-  //    declared `findingKind` as the kind label. Registry order is
-  //    preserved, which keeps sort-stable behavior identical to the
+  // 3. Wrap each finding into the unified envelope. Per-finding `kind`
+  //    takes precedence over the registry's declared `findingKind`, so a
+  //    single analyzer that emits multiple finding kinds (e.g. shape-drift
+  //    emits `shape-drift` for storage and `event-shape-drift` for events;
+  //    lifecycle-cleanup-drift emits `missing-teardown` /
+  //    `abort-never-called` / `handler-identity-mismatch`) gets each
+  //    finding routed to its own severity / confidence / message / fingerprint
+  //    case. The registry's `findingKind` is the fallback for analyzers
+  //    that don't carry their own kind on each finding. Registry order
+  //    is preserved, which keeps sort-stable behavior identical to the
   //    pre-registry hand-coded order.
   const wrapped = [];
   for (const { detector, result } of detectorResults) {
     for (const f of result.findings) {
-      wrapped.push(wrap(detector.findingKind, f, rootById, changedFilesAbs));
+      wrapped.push(wrap(f.kind ?? detector.findingKind, f, rootById, changedFilesAbs));
     }
   }
 

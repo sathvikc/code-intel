@@ -40,6 +40,12 @@ const KIND_LABELS = {
   'stale-module-capture': 'Stale module-scope capture',
   'paired-keys': 'Paired storage keys',
   'shape-drift': 'Shape drift across storage channel',
+  'event-shape-drift': 'Shape drift across CustomEvent channel',
+  'structural-drift': 'Structural drift on exported object',
+  'event-bridge': 'Cross-host event bridge',
+  'missing-teardown': 'Missing teardown for registered handler',
+  'abort-never-called': 'AbortController never aborted',
+  'handler-identity-mismatch': 'Handler identity mismatch (add/remove EventListener)',
   'duplicate-static-svg-id': 'Duplicate static SVG id',
 };
 
