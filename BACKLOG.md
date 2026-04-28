@@ -43,7 +43,7 @@ Planned:
 - [ ] `side-effect-at-import` — module-top-level writes / fetches / timers / DOM mutations (P14; reuses `stale-captures` walker)
 - [ ] `shared-request-state` — mutable module-scope state reachable from request-handler entry points; SSR multi-tenancy leak (P15; depends on framework-context config / Q3)
 - [ ] `discriminated-union-drift` — string-literal union extended without updating exhaustive switch/if consumers (P16; feasibility of syntactic-only resolution still open)
-- [ ] `stateful-shared-regex` — module/class-scope `/g` or `/y` regex used with `.test()` / `.exec()` across ≥2 call sites (P17)
+- [x] `stateful-shared-regex` — module-scope `/g` or `/y` regex used with `.test()`/`.exec()` (P17) — see D23
 - [ ] `env-var-drift` — `process.env.*` / `import.meta.env.*` references vs `.env.example` / `zod` / `envsafe` schema declarations (P19)
 - [ ] `storage-clear-cascade` — `localStorage.clear()` / `sessionStorage.clear()` that would wipe keys owned by other files (P20; piggybacks on `shared-state`)
 - [ ] `lost-this-callback` — method reference passed as a callback whose body reads `this` without bind/arrow (P21)
