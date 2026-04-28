@@ -45,6 +45,7 @@ const USAGE = `Usage:
   code-intel paired-keys     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
   code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
   code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel proxied-globals [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -79,6 +80,9 @@ Subcommands:
                   on a page (SSR pre-render, lists, grids) the browser resolves
                   every url(#id) to whichever copy it saw first, silently
                   corrupting gradients/filters/masks/use-symbols.
+  proxied-globals Detect Proxy-replacement of browser platform globals
+                  (window.history = new Proxy(...), window.fetch = new Proxy(...),
+                  …). Per-site recall-first; no cross-file threshold.
 
 Args:
   paths           One or more project roots. Defaults to "." if omitted.

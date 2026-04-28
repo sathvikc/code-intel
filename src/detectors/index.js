@@ -29,6 +29,7 @@ import * as duplicateStaticSvgId from '../duplicate-static-svg-id.js';
 import * as eventBridge from '../event-bridge.js';
 import * as structuralDrift from '../structural-drift.js';
 import * as lifecycleCleanupDrift from '../lifecycle-cleanup-drift.js';
+import * as proxiedPlatformGlobal from '../proxied-platform-global.js';
 
 /**
  * @typedef {object} DetectorEntry
@@ -179,6 +180,24 @@ export const DETECTORS = [
       `  missing-teardown:    ${s.byKind['missing-teardown'] ?? 0}`,
       `  abort-never-called:  ${s.byKind['abort-never-called'] ?? 0}`,
       `  handler-mismatch:    ${s.byKind['handler-identity-mismatch'] ?? 0}`,
+    ],
+  },
+  {
+    id: 'proxied-globals',
+    module: proxiedPlatformGlobal,
+    findingKind: 'proxied-platform-global',
+    summarize: (s) => [
+      `code-intel / proxied-platform-global`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  by-host:`,
+      ...Object.entries(s.byHost ?? {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([h, n]) => `    ${h}: ${n}`),
+      `  by-property:`,
+      ...Object.entries(s.byProperty ?? {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([p, n]) => `    ${p}: ${n}`),
     ],
   },
 ];

@@ -134,6 +134,10 @@ function severityFor(kind, detail) {
       // User-visible rendering corruption (gradients, filters, masks), not
       // data loss. Warning tier is right: the bug is bad but bounded.
       return 'warning';
+    case 'proxied-platform-global':
+      // A Proxy may be transparent (Reflect.*-based handler), so not
+      // automatically critical. Warning: reviewer reads the handler.
+      return 'warning';
     default:
       return 'info';
   }
@@ -190,6 +194,8 @@ function confidenceFor(kind, detail, closure) {
       return confidenceHandlerIdentityMismatch(detail, closure);
     case 'duplicate-static-svg-id':
       return confidenceDuplicateSvgId(detail, closure);
+    case 'proxied-platform-global':
+      return confidenceProxiedPlatformGlobal(detail, closure);
     default:
       return { confidence: 'medium', reason: 'No specific confidence rule for this finding kind.' };
   }
@@ -541,6 +547,32 @@ function confidenceHandlerIdentityMismatch(detail, closure) {
   };
 }
 
+function confidenceProxiedPlatformGlobal(detail, closure) {
+  // The static fact (a Proxy is being installed on a built-in
+  // browser global) is high-reliability — the AST shape is
+  // unambiguous and the catalogue gates against app-globals.
+  // The runtime implication (does the handler swallow third-party
+  // writes?) is the uncertainty. Confidence MEDIUM; the reviewer
+  // reads the handler's set / get traps and decides.
+  const fileCount = new Set(
+    detail.occurrences.map((o) => `${o.project}:${o.file}`)
+  ).size;
+  const installSitesText = fileCount > 1
+    ? `installed in ${fileCount} files`
+    : 'installed at one site';
+  return {
+    confidence: 'medium',
+    reason:
+      `Built-in browser global '${detail.host}.${detail.property}' is ${installSitesText} `
+      + `wholesale-replaced with a Proxy. Third-party libraries that decorate the original `
+      + `(e.g. analytics SDKs, polyfills, dev-tooling shims) write directly to the host; if `
+      + `the Proxy's set / get traps do not fall through to the target via Reflect.set / `
+      + `Reflect.get, those writes are silently lost. Confirm the handler is fully `
+      + `transparent — or use targeted method-level monkey-patching instead of wholesale `
+      + `Proxy replacement (the canonical fix per pattern P8).`,
+  };
+}
+
 function confidenceShapeDrift(detail, closure) {
   // shape-drift only emits when BOTH sides have at least one literal
   // shape observation AND the aggregated shapes disagree — so the
@@ -724,6 +756,9 @@ function findingIdFor(kind, detail) {
     const comp = detail.component ?? '<anon>';
     return `${kind}:${detail.id}@${loc?.project ?? '?'}:${loc?.file ?? '?'}:${comp}`;
   }
+  if (kind === 'proxied-platform-global') {
+    return `${kind}:${detail.host}.${detail.property}`;
+  }
   const key = detail.key ?? detail.channel ?? detail.name ?? 'anon';
   return `${kind}:${key}`;
 }
@@ -846,6 +881,13 @@ function fingerprintFor(kind, detail) {
       parts.push(detail.id ?? '', loc.project ?? '?', loc.file ?? '?', detail.component ?? '<anon>');
       break;
     }
+    case 'proxied-platform-global':
+      // Static-coupling finding: same bug regardless of which files do
+      // the install. Location is NOT part of the fingerprint — mirrors
+      // the shared-global-binding recipe (kind + logical identity).
+      // fingerprintFor === patternFingerprintFor for this kind.
+      parts.push(detail.host ?? '', detail.property ?? '');
+      break;
     default:
       // Unknown kind: hash whatever identity the detail carries, so at
       // least the fingerprint is deterministic per-run.
@@ -906,6 +948,11 @@ function patternFingerprintFor(kind, detail) {
       break;
     case 'duplicate-static-svg-id':
       parts.push(detail.id ?? '');
+      break;
+    case 'proxied-platform-global':
+      // Location-free (kind + host + property). Same recipe as
+      // fingerprintFor for this kind — fingerprint === patternFingerprint.
+      parts.push(detail.host ?? '', detail.property ?? '');
       break;
     default:
       parts.push(JSON.stringify(detail));

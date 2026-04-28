@@ -717,3 +717,27 @@ test('baseline diff: computeDiff([], findings) — all are resolved', () => {
   assert.equal(diff.resolved.length, result.findings.length, 'all baseline findings are resolved when current is empty');
   assert.equal(diff.unchanged.length, 0);
 });
+
+// ---------- proxied-platform-global decoration ----------
+
+test('impact: proxied-platform-global finding is decorated with correct severity/confidence/fingerprint/id', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/nav.ts', `window.history = new Proxy(window.history, {});`);
+
+  const result = analyzeProjects([a]);
+  const f = result.findings.find((x) => x.kind === 'proxied-platform-global');
+  assert.ok(f, 'expected a proxied-platform-global finding');
+
+  assert.equal(f.severity, 'warning');
+  assert.equal(f.confidence, 'medium');
+  assert.ok(typeof f.confidenceReason === 'string' && f.confidenceReason.includes('Reflect'),
+    'confidenceReason should mention Reflect');
+  assert.ok(typeof f.fingerprint === 'string' && /^[0-9a-f]{16}$/.test(f.fingerprint),
+    'fingerprint should be 16-char hex');
+  assert.ok(typeof f.patternFingerprint === 'string' && /^[0-9a-f]{16}$/.test(f.patternFingerprint),
+    'patternFingerprint should be 16-char hex');
+  assert.equal(f.fingerprint, f.patternFingerprint,
+    'fingerprint and patternFingerprint should be equal for proxied-platform-global (static coupling kind)');
+  assert.equal(f.id, 'proxied-platform-global:window.history');
+});
