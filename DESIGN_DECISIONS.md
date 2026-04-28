@@ -1424,3 +1424,53 @@ Shape #2 and #3 are real signal in an *open-world* sense (the missing side may b
 - **Apply the threshold but emit a per-finding "dropped because single-file" diagnostic on stderr.** Rejected: noise on stderr, no structured consumer for it. If we later want this signal back, an `event-orphan` kind is the right channel.
 
 **Reasoning:** `shared-state-events` is the *coupling* analyzer for CustomEvent channels. A coupling is by definition a relationship between two or more things in different scopes; a channel touched by one file is not a coupling claim. The current behaviour mixes orphan signals into the coupling kind, which is exactly the shape of false positive that pollutes the report and trains AI agents (and humans) to discount the analyzer's output. Filter strictly on the property that matches the kind's name — `shared` between distinct files — and surface the orphan signal separately when there's a clear case for it.
+
+## D21 — Default-skip test-context files at the walk layer (with `--include-test-context` opt-out)
+
+**Status:** active
+**Related:** D17 (build-artifact skip — same pattern, different axis), D2 (recall over precision — narrows recall to drop a systemic noise category), `src/project.js#classifyBuildArtifact` (shape precedent), the BACKLOG `Default-exclude test-context files from cross-file thresholds` entry under "Detector noise reduction".
+
+**Decision:** `walkSourceFiles` in `src/project.js` filters out test-context files **by default** at file-discovery time. A new option `includeTestContext` (CLI: `--include-test-context`) restores the prior behaviour. The decision rule lives in a new `classifyTestContext(filePath)` helper, structurally parallel to `classifyBuildArtifact` — filename-pattern and path-segment classification, **no AST inspection**. Because the skip lives in the walker, every detector inherits it without per-detector wiring; the same-shape escape-hatch flag is threaded through every `analyzeProjects` and trace function exactly the way `includeBuildArtifacts` already is.
+
+**Context:** Test setup files (`jest.setup.*`, `vitest.config.*`, `setupTests.*`) and spec files (`*.test.*`, `*.spec.*`, `__tests__/**`) routinely:
+
+1. Stub browser globals — `window.IntersectionObserver = vi.fn()`, `window.matchMedia = jest.fn(...)`. Two test files stubbing the same global look identical to the analyzer to two production files declaring the same global, so `shared-state-globals` emits a "declared by 2 files" collision.
+2. Touch session/local storage — `sessionStorage.setItem('user', JSON.stringify(testUser))` in a `beforeEach`, `localStorage.clear()` in an `afterEach`. `shared-state-web-storage` then records storage-key occurrences across test files and the production file under test, surfacing a "shared key" finding that is purely test-isolation plumbing.
+3. Delete globals in cleanup — `delete globalThis.fetch` after a fetch mock. With the D6 remove-op filter shared-state-globals already excludes these from the threshold count, but the *occurrence* still appears in `f.occurrences` and surfaces in the markdown report.
+4. Dispatch / listen for synthetic events — JSDOM tests routinely `dispatchEvent(new Event('storage'))` to simulate cross-tab updates. Pre-D20 these emitted single-file orphan findings; post-D20 they emit only when ≥2 test files share a name, which still happens in practice (multiple component tests stubbing the same DOM event).
+
+Each isolated test process is its own world. Counting two test files that stub the same global as a "production load-order coupling" is wrong by construction, and the noise pollutes every detector's output simultaneously — exactly the reason D17 chose the walk-layer over per-detector logic.
+
+**What v1 of D21 ships:**
+
+- `classifyTestContext(filePath)` in `src/project.js`, returning `null` for non-test files and `{ kind: 'test-context', reason: <string> }` otherwise. Reasons are diagnostic strings (e.g. `'filename-test'`, `'filename-spec'`, `'setup-config'`, `'tests-dir'`, `'__tests__-dir'`) so that future tooling — including a possible `--explain-skips` mode — can surface why a file was dropped.
+- `walkSourceFiles` consults `classifyTestContext` after `classifyBuildArtifact`; an `opts.includeTestContext === true` short-circuits the check. Order: `IGNORED_DIRS` → glob `--exclude` → build-artifact skip → test-context skip → emit.
+- New CLI flag `--include-test-context` available on every subcommand (`impact`, `trace`, every per-detector subcommand). USAGE text mirrors `--include-build-artifacts`.
+- The flag is threaded through every `analyzeProjects` / trace function the way `includeBuildArtifacts` already is. Mechanical change; no per-detector logic.
+- Patterns covered in v1 (filename matching is case-insensitive on the basename; path segments match anywhere in the relative path):
+  - **Filename suffixes:** `*.test.{js,jsx,ts,tsx,mjs,cjs}`, `*.spec.{js,jsx,ts,tsx,mjs,cjs}`
+  - **Setup / config files:** `jest.setup.*`, `jest.config.*`, `vitest.setup.*`, `vitest.config.*`, `setup-jest.*`, `setup-tests.*`, `setupTests.{js,ts}`, `setupFiles.{js,ts}`
+  - **Path segments anywhere in the relative path:** `__tests__/`, `__mocks__/`
+  - **Top-of-project test directories** (matched only when the segment is the first component of the relative path): `tests/`, `test/`, `e2e/`, `cypress/`, `playwright/`
+- New fixture project at `examples/test-context/` exercising the skip end-to-end. Shape mirrors the `examples/build-artifacts/` precedent: a self-contained `package.json` + realistic test scaffolding (vitest config, setupTests stubbing browser globals, a `src/foo.ts` production file, and matching `*.test.ts` / `__tests__/` files that would emit cross-file collisions if not skipped). Default `impact` against the fixture emits ≤1 finding; `impact --include-test-context` emits the noisy collisions explicitly. Runnable via `.ai-history/verify.sh`'s smoke step.
+- `examples/README.md` gets a new row in the scenario table linking the fixture to D21.
+
+**Schema impact (D3):** behavioural, not structural. The schema is unchanged; `--include-test-context` restores the prior emission set deterministically. No `SCHEMA_VERSION` bump.
+
+**Out of scope (deferred):**
+
+- **Storybook files** (`*.stories.{ts,tsx,js,jsx}`, `.storybook/`). Storybook is UI dev/preview, not test isolation; treating it as test-context would suppress findings that are actually about preview-time behaviour (e.g. a Storybook story leaking sessionStorage across stories *is* a real bug). Skip only when a real-codebase example shows it as noise.
+- **Per-occurrence `context: 'test' | 'production' | 'build-artifact'` metadata.** Option (b) from the BACKLOG entry. Preserves visibility for users who explicitly want test-only collisions surfaced (e.g. as a low-severity `test-isolation-leak` kind). Defer until a user explicitly asks for it; v1 walk-layer skip is the minimum viable unblock.
+- **User-configurable patterns** (config-file `testContext: { include: [...], exclude: [...] }`). Q3 territory. Use `--exclude '**/__tests__'` glob today if the built-in patterns don't fit a project's conventions.
+- **Auto-detection of test framework via `package.json` devDependencies.** Tempting (vitest present → enable vitest's setup-file patterns) but not load-bearing: the built-in patterns already cover the conventions every framework standardises on. Adds parsing complexity for marginal recall.
+- **Skipping framework-internal test directories such as `node_modules/foo/__tests__/`.** Already covered by `IGNORED_DIRS` (`node_modules`); D21 does not change that.
+
+**Alternatives considered:**
+
+- **Per-occurrence `context` field instead of walk-layer skip.** Rejected for v1: every detector would need to thread context awareness through its threshold logic, and the no-test-context-finding consumer (the dominant case by far) ends up paying for an option they don't use. Walk-layer skip is dramatically simpler, ships now, and option (b) remains a future addition for the small set of users who want test collisions surfaced.
+- **Make test-context skip on by default but emit a one-line summary on stderr** (`"skipped 23 test-context files; pass --include-test-context to include"`). Rejected: stderr is unstructured channel; an AI consumer cannot reliably parse it. If users want skip statistics, the right shape is a structured `meta.skipped: { buildArtifact: N, testContext: M }` block — log it as a follow-up if a consumer asks.
+- **Auto-detect test files by content sniffing** (look for top-level `import { test, describe } from 'vitest'` etc.). Rejected: parses the file just to decide whether to parse it; defeats the walk-layer cheapness. Filename + path heuristics catch the conventional cases at near-zero cost.
+- **Recall-mode: emit test-context findings under a separate `severity: 'info'` tier instead of dropping.** Same critique as the D20 alternative: dilutes the existing kinds with mixed-meaning findings. The clean shape is a future `test-isolation-leak` kind if/when needed.
+- **Hard-code test paths in each detector's `analyzeProjects`.** Rejected for the same reason D17 lived in the walker: noise reduction at the walk layer is the correct architectural seam; it benefits every detector and every consumer with one change.
+
+**Reasoning:** Test-context noise is the next-largest systemic false-positive category after the build-artifact skip (D17) and the events ≥2-file threshold (D20). It reproduces on every monorepo that uses jest, vitest, or a custom node:test setup — i.e. essentially every JavaScript project. Skip-by-default with a structured opt-out is the minimum-viable answer: it unbreaks the dominant case, doesn't lock out the rare user who wants test collisions surfaced, and builds on a pattern (D17) that already proved out the option-threading shape.
