@@ -1474,3 +1474,77 @@ Each isolated test process is its own world. Counting two test files that stub t
 - **Hard-code test paths in each detector's `analyzeProjects`.** Rejected for the same reason D17 lived in the walker: noise reduction at the walk layer is the correct architectural seam; it benefits every detector and every consumer with one change.
 
 **Reasoning:** Test-context noise is the next-largest systemic false-positive category after the build-artifact skip (D17) and the events ≥2-file threshold (D20). It reproduces on every monorepo that uses jest, vitest, or a custom node:test setup — i.e. essentially every JavaScript project. Skip-by-default with a structured opt-out is the minimum-viable answer: it unbreaks the dominant case, doesn't lock out the rare user who wants test collisions surfaced, and builds on a pattern (D17) that already proved out the option-threading shape.
+
+## D22 — `proxied-platform-global`: per-site detector for `Proxy`-replacement of browser platform globals (P8)
+
+**Status:** active
+**Related:** P8 (the source pattern), `VISION.md` "Runtime bugs with a static signature" (third engine-scope category), D2 (recall over precision — smell-tier detection is in scope), D5 (syntactic only — we do not analyse Proxy handler transparency), D13 (detector registry — single-line registration), `shared-state-globals` (adjacent but distinct: P3 catches `<host>.X = ...` collisions across files; P8 catches `<host>.<platformProp> = new Proxy(...)` per-site regardless of file count).
+
+**Decision:** A new analyzer `proxied-platform-global` detects assignments of the shape `<host>.<platformProp> = new Proxy(...)` where `<host>` is a browser-environment root (`window`, `globalThis`, `self`) and `<platformProp>` names a built-in browser global from a v1 catalogue. Each such assignment is one occurrence; occurrences with the same `(host, property)` pair group into one finding. **No cross-file threshold** — a single Proxy installation is the bug pattern. Findings ship at `severity: 'warning'`, `confidence: 'medium'` by default, with confidence reasoning that names the third-party-write swallowing risk. Schema-additive: new `kind: 'proxied-platform-global'`, no existing field changes.
+
+**Why per-site instead of cross-file:** Unlike P3 (`shared-state-globals`), where the bug pattern *requires* two files to collide on a name, P8 fires on a single replacement: one `window.history = new Proxy(window.history, ...)` is enough for any third-party library that later attaches a property to `window.history` to silently lose data. The cross-file threshold that worked for D20 / D21 noise reduction would *suppress the bug class entirely* here. Recall-first per D2: flag every Proxy installation on a platform global; let the reviewer judge whether the handler is transparent.
+
+**What the v1 slice detects:**
+
+- Assignment expressions of shape `<HostId>.<PropName> = <RHS>` where:
+  - `<HostId>` ∈ `{ window, globalThis, self }` (single identifier; no aliased / dotted hosts in v1).
+  - `<PropName>` ∈ the platform-property catalogue below (single identifier; no computed `[expr]` access in v1).
+  - `<RHS>` is a `NewExpression` whose callee is the bare identifier `Proxy`.
+- The assignment may live anywhere in the file (module scope, function body, class method, conditional branch). Conditional installation (`if (FEATURE_FLAG) { window.history = new Proxy(...) }`) still emits — the reviewer needs to know the Proxy can be installed at all.
+
+**Platform-property catalogue (v1):**
+
+History / navigation: `history`, `location`.
+Network: `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`.
+Storage: `localStorage`, `sessionStorage`, `indexedDB`, `caches`.
+Document / DOM: `document`.
+Logging / observability: `console`.
+Crypto / perf / capability: `crypto`, `performance`, `navigator`.
+Notifications: `Notification`.
+
+The catalogue lives as a `const PLATFORM_PROPS = new Set([...])` at the top of `src/proxied-platform-global.js`. Adding a name is a one-line edit and a regression test; no design churn. The list is intentionally conservative — every name on it is something a third-party library plausibly attaches to. App-defined globals (`window.myAppState = new Proxy(...)`) are out of scope by construction; `shared-state-globals` already covers app-global declarations.
+
+**Finding envelope:**
+
+```js
+{
+  kind: 'proxied-platform-global',
+  host: 'window' | 'globalThis' | 'self',
+  property: '<catalogued name>',     // e.g. 'history', 'fetch', 'localStorage'
+  fingerprint: '<hash>',              // location-aware (file + line + host + property)
+  patternFingerprint: '<hash>',       // location-free (kind + host + property), per D18
+  severity: 'warning',
+  confidence: 'medium',
+  confidenceReason: '<paragraph>',
+  occurrences: [{
+    project, file, line, column,
+    op: 'install',                    // matches D6 op-vocabulary; future kinds may add 'restore'
+    snippet,
+  }]
+}
+```
+
+**Grouping rule:** one finding per `(host, property)` per project pair (matches `shared-state-globals` precedent for grouping by name + host). Two install sites in the same file = one finding with two occurrences. Two install sites in two files = one finding with two occurrences (and the second occurrence is independently informative — both replacements compose; both are bug surfaces).
+
+**Severity / confidence stance:** `warning` (not `critical`) because the Proxy *might* be transparent (`Reflect.*`-based handler with `target` as the storage), in which case it's a no-op for third-party writes. `medium` confidence reflects that uncertainty. The `confidenceReason` text names the failure mode explicitly: *"Replacing a built-in browser global with a Proxy can swallow property writes from third-party libraries that decorate the original. Confirm the Proxy's `set` / `get` traps fall through to the target via `Reflect`."* The reviewer reads the `set` handler and decides.
+
+**Out of scope (deferred to v2 / explicit follow-ups):**
+
+- **Descriptor-based replacement** — `Object.defineProperty(window, 'history', { value: new Proxy(...) })`, `Object.defineProperty(document, 'cookie', { get, set })`. The cookie-descriptor swap is the only pattern PATTERNS.md P8 names that v1 misses; log as a known recall gap.
+- **Aliased hosts** — `const w = window; w.history = new Proxy(...)`. Same Q1 / Q2 territory as storage-alias resolution; defer until same-file alias-follow lands as a shared helper.
+- **One-hop indirect Proxy** — `const PatchedHistory = new Proxy(window.history, {...}); window.history = PatchedHistory;`. The RHS in this case is an identifier, not a `NewExpression`. v1 would miss it. Tractable v1.5 (resolve same-scope `const X = new Proxy(...)` and re-attempt match) but defers to keep the v1 surface tight.
+- **`Reflect.set` / `Reflect.defineProperty` installations** — out of scope; same family as descriptor-based.
+- **Cross-file Proxy installation** — module A defines `export const PatchedHistory = new Proxy(...)`, module B does `window.history = PatchedHistory`. Q1 / Q2 wrapper-modules territory; defer.
+- **Transparency analysis of the handler** — explicitly D5-rejected. Static analysis cannot decide whether a `set` trap calls `Reflect.set(target, prop, value)` correctly. The `confidenceReason` names the question; the reviewer (human or AI) answers it.
+- **Trace integration** — `trace --proxied-global window.history` would star-topology every Proxy install on that property. Not v1; pure follow-on once a real codebase has multiple installs.
+
+**Schema impact (D3):** purely additive. New `kind` value (`proxied-platform-global`); existing kinds unchanged. No `SCHEMA_VERSION` bump.
+
+**Alternatives considered:**
+
+- **Fold into `shared-state-globals` as a new `op: 'proxy-install'`.** Rejected: P3 and P8 are *different* bug patterns. P3 fires on cross-file collision (≥2 declarers per D20-precedent threshold). P8 fires per-site with no threshold (one Proxy install IS the bug). Combining them would force `shared-state-globals` to carry two contradictory threshold rules keyed on op. Cleaner as its own finding kind.
+- **Recall-broader: emit on `<anyHost>.<anyProp> = new Proxy(...)` regardless of catalogue.** Rejected for v1: the canonical bug requires the property to be a built-in (third-party libraries decorate well-known names, not app names). Broader recall = noise on every app-state Proxy. Catalogue-gated keeps v1 actionable; expand the catalogue as new platform names justify it.
+- **Confidence `low` instead of `medium`.** Considered. Settled on `medium` because the static fact (a Proxy is being installed on a built-in) is highly reliable; only the runtime implication (does the handler swallow third-party writes) is uncertain. `low` would understate the static signal.
+- **Per-handler transparency heuristic** — flag `medium` if the handler has an explicit `set` trap that doesn't call `Reflect.set` / `target[prop] = value`; `low` otherwise. Tempting and probably correct, but requires inspecting the handler object literal. Defer to v2; v1 ships with one severity tier.
+
+**Reasoning:** Per VISION the engine catalogue is the product, and "runtime bugs with a static signature" is an explicit third category alongside cross-file coupling and module-scope lifecycle bugs. P8 is one of the two charter patterns named under that category (P7 the other), with a real production incident as its source. The static signal is unambiguous (a single AST shape filtered by two small catalogues). The detection lives in roughly 150 lines of new code, no new infrastructure. After D17–D21's noise-reduction streak, this resumes catalogue growth on a real-incident pattern with the smallest viable slice — exactly the "ship partial, iterate" stance the workflow rules demand. P7 follows as a separate slice once P8's smell-tier shape is proven on real code.
