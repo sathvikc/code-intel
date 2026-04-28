@@ -35,16 +35,16 @@ const ANALYZER_COMMANDS = Object.fromEntries(
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--baseline <path>] [--markdown|--json] [--pretty] [--exclude <path>]
-                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts]
+                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts] [--world closed|open]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
-                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel shared-state    [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel shared-events   [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
-  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts]
+                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel shared-state    [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel shared-events   [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -121,6 +121,15 @@ Options:
                   artifacts (*.min.js, files under vendor/vendors/bundle/
                   bundles/chunks directories, files whose first line exceeds
                   1000 characters). Default: off (artifacts are skipped).
+  --world closed|open
+                  Assert the closure of the world \`code-intel\` is
+                  scanning. Default \`open\`: producers/consumers may
+                  live in code we did not scan (other repos, workers,
+                  inline-script handlers); confidence reasons hedge
+                  accordingly. \`closed\`: the paths given are the
+                  complete world; orphan-side findings (writer-only,
+                  listener-only) are tiered up and "may live elsewhere"
+                  hedges are dropped from reason text. See D19.
   --only <ids>    (impact only) comma-separated detector ids to run; other
                   detectors are skipped entirely (not just filtered post-hoc).
                   Repeatable. Unknown ids fail fast.
@@ -140,7 +149,7 @@ Options:
 `;
 
 function parseCommonArgs(argv) {
-  const args = { paths: [], pretty: false, help: false, exclude: [], includeBuildArtifacts: false };
+  const args = { paths: [], pretty: false, help: false, exclude: [], includeBuildArtifacts: false, closure: 'open' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--pretty') args.pretty = true;
@@ -151,6 +160,13 @@ function parseCommonArgs(argv) {
       args.exclude.push(v);
     }
     else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
+    else if (a === '--world') {
+      const v = argv[++i];
+      if (v !== 'closed' && v !== 'open') {
+        throw new Error(`--world must be 'closed' or 'open', got '${v ?? '<missing>'}'`);
+      }
+      args.closure = v;
+    }
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -179,6 +195,7 @@ function parseImpactArgs(argv) {
     skip: [],
     noCache: false,
     cacheStats: false,
+    closure: 'open',
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -210,6 +227,13 @@ function parseImpactArgs(argv) {
     }
     else if (a === '--no-cache') args.noCache = true;
     else if (a === '--cache-stats') args.cacheStats = true;
+    else if (a === '--world') {
+      const v = argv[++i];
+      if (v !== 'closed' && v !== 'open') {
+        throw new Error(`--world must be 'closed' or 'open', got '${v ?? '<missing>'}'`);
+      }
+      args.closure = v;
+    }
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -249,6 +273,7 @@ async function runImpact(argv) {
     skip: args.skip.length > 0 ? args.skip : undefined,
     noCache: args.noCache || undefined,
     astCache,
+    closure: args.closure,
   });
 
   if (args.baseline) {
@@ -305,6 +330,7 @@ function parseTraceArgs(argv) {
     help: false,
     exclude: [],
     includeBuildArtifacts: false,
+    closure: 'open',
   };
   const setTarget = (t) => {
     if (args.target) {
@@ -345,6 +371,13 @@ function parseTraceArgs(argv) {
       args.exclude.push(v);
     }
     else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
+    else if (a === '--world') {
+      const v = argv[++i];
+      if (v !== 'closed' && v !== 'open') {
+        throw new Error(`--world must be 'closed' or 'open', got '${v ?? '<missing>'}'`);
+      }
+      args.closure = v;
+    }
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -405,7 +438,7 @@ async function runAnalyzer(sub, argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts });
+  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts, closure: args.closure });
   const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
   process.stdout.write(json + '\n');
   const summary = cmd.analyzer.summarize(result);

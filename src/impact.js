@@ -162,40 +162,40 @@ function severityFor(kind, detail) {
 // Reasons are written as one paragraph a reviewer can read in 5 seconds
 // and decide whether to act. They intentionally name the context (SPA vs
 // MPA, same-file vs cross-project, etc.) that governs the classification.
-function confidenceFor(kind, detail) {
+function confidenceFor(kind, detail, closure) {
   switch (kind) {
     case 'shared-storage-key':
-      return confidenceStorageKey(detail);
+      return confidenceStorageKey(detail, closure);
     case 'shared-event-channel':
-      return confidenceEventChannel(detail);
+      return confidenceEventChannel(detail, closure);
     case 'shared-global-binding':
-      return confidenceGlobalBinding(detail);
+      return confidenceGlobalBinding(detail, closure);
     case 'stale-module-capture':
-      return confidenceStaleCapture(detail);
+      return confidenceStaleCapture(detail, closure);
     case 'paired-keys':
-      return confidencePairedKeys(detail);
+      return confidencePairedKeys(detail, closure);
     case 'shape-drift':
-      return confidenceShapeDrift(detail);
+      return confidenceShapeDrift(detail, closure);
     case 'event-shape-drift':
-      return confidenceEventShapeDrift(detail);
+      return confidenceEventShapeDrift(detail, closure);
     case 'structural-drift':
-      return confidenceStructuralDrift(detail);
+      return confidenceStructuralDrift(detail, closure);
     case 'event-bridge':
-      return confidenceEventBridge(detail);
+      return confidenceEventBridge(detail, closure);
     case 'missing-teardown':
-      return confidenceMissingTeardown(detail);
+      return confidenceMissingTeardown(detail, closure);
     case 'abort-never-called':
-      return confidenceAbortNeverCalled(detail);
+      return confidenceAbortNeverCalled(detail, closure);
     case 'handler-identity-mismatch':
-      return confidenceHandlerIdentityMismatch(detail);
+      return confidenceHandlerIdentityMismatch(detail, closure);
     case 'duplicate-static-svg-id':
-      return confidenceDuplicateSvgId(detail);
+      return confidenceDuplicateSvgId(detail, closure);
     default:
       return { confidence: 'medium', reason: 'No specific confidence rule for this finding kind.' };
   }
 }
 
-function confidenceStorageKey(detail) {
+function confidenceStorageKey(detail, closure) {
   if (detail.dynamic) {
     return {
       confidence: 'low',
@@ -231,26 +231,36 @@ function confidenceStorageKey(detail) {
     };
   }
   if (files.size >= 2) {
+    const hedge = closure === 'closed'
+      ? ''
+      : ' (a wrapper or a worker file)';
     return {
-      confidence: 'medium',
+      confidence: closure === 'closed' ? 'high' : 'medium',
       reason:
         `Literal key '${detail.key}' is touched by ${files.size} files but all occurrences are the same `
         + `operation type (${[...ops].join(', ')}). The coupling is real but weaker — e.g. several readers `
-        + 'with no visible writer may mean the writer is in a module the analyzer did not scan (a wrapper '
-        + 'or a worker file), or the write happens on a different branch that was pruned.',
+        + `with no visible writer may mean the writer is in a module the analyzer did not scan${hedge}, `
+        + 'or the write happens on a different branch that was pruned.',
     };
   }
+  // Single-file: the in-file coupling is real but the blast radius is
+  // local. Under open-world we hedge that wrapper modules / workers /
+  // other repos may still touch this key invisibly. Under closed-world
+  // the user has asserted those don't exist; drop the hedge.
   return {
     confidence: 'medium',
-    reason:
-      `Literal key '${detail.key}' is used within a single file. The in-file coupling is real (if one `
-      + 'function writes and another reads, shape drift across a refactor still bites), but the blast '
-      + 'radius is local. Verify the key is not read or written elsewhere via a wrapper module this '
-      + "analyzer can't see.",
+    reason: closure === 'closed'
+      ? `Literal key '${detail.key}' is used within a single file. The in-file coupling is real (if one `
+        + 'function writes and another reads, shape drift across a refactor still bites), but the blast '
+        + 'radius is local and no other file in the scanned world touches this key.'
+      : `Literal key '${detail.key}' is used within a single file. The in-file coupling is real (if one `
+        + 'function writes and another reads, shape drift across a refactor still bites), but the blast '
+        + 'radius is local. Verify the key is not read or written elsewhere via a wrapper module this '
+        + "analyzer can't see.",
   };
 }
 
-function confidenceEventChannel(detail) {
+function confidenceEventChannel(detail, closure) {
   if (detail.dynamic) {
     return {
       confidence: 'low',
@@ -282,17 +292,19 @@ function confidenceEventChannel(detail) {
         + 'is real and unchecked by the compiler.',
     };
   }
+  const hedge = closure === 'closed'
+    ? ''
+    : ', or the event is fired by a library';
   return {
-    confidence: 'medium',
+    confidence: closure === 'closed' ? 'high' : 'medium',
     reason:
       `CustomEvent channel '${detail.channel}' has ${files.size} file(s) touching it with ops `
       + `${[...ops].join(', ')}. The coupling is plausible but one-sided — e.g. a listener with no `
-      + 'visible dispatcher may mean the dispatcher is in code the analyzer did not scan, or the event '
-      + 'is fired by a library.',
+      + `visible dispatcher may mean the dispatcher is in code the analyzer did not scan${hedge}.`,
   };
 }
 
-function confidenceGlobalBinding(detail) {
+function confidenceGlobalBinding(detail, closure) {
   // The shared-globals analyzer already filters out self-assign and
   // same-file redeclaration (§2.6 fix), so every finding that makes it
   // here involves ≥2 distinct files. Cross-file global overwrite is
@@ -308,7 +320,7 @@ function confidenceGlobalBinding(detail) {
   };
 }
 
-function confidenceStaleCapture(detail) {
+function confidenceStaleCapture(detail, closure) {
   // Stale module-scope captures are the most context-dependent pattern
   // we emit — they are bugs in persistent-module runtimes (SPAs, SSR
   // client bundles, workers, long-running Node) but not in MPAs with
@@ -325,7 +337,7 @@ function confidenceStaleCapture(detail) {
   };
 }
 
-function confidencePairedKeys(detail) {
+function confidencePairedKeys(detail, closure) {
   // v1 finds the cluster; v2 (on the backlog) correlates across the
   // codebase. The cluster itself is a factual observation (these keys
   // ARE written together inside this function); the bug claim depends
@@ -342,7 +354,7 @@ function confidencePairedKeys(detail) {
   };
 }
 
-function confidenceDuplicateSvgId(detail) {
+function confidenceDuplicateSvgId(detail, closure) {
   // v2 per D10: confidence reflects whether the duplication is
   // demonstrable in the current code (high) or merely an observed
   // textual fact whose page-level impact we can't prove (low). We
@@ -390,7 +402,7 @@ function confidenceDuplicateSvgId(detail) {
   };
 }
 
-function confidenceEventShapeDrift(detail) {
+function confidenceEventShapeDrift(detail, closure) {
   // Mirrors confidenceShapeDrift's tiering. event-shape-drift only emits
   // when BOTH dispatch and listen sides have ≥1 literal shape AND the
   // unions disagree, so the factual claim is always true; confidence
@@ -415,18 +427,21 @@ function confidenceEventShapeDrift(detail) {
         + opaqueNote,
     };
   }
+  const eventShapeHedge = closure === 'closed'
+    ? 'an inline-script handler'
+    : 'an inline-script handler, a wrapper, a different repo';
   return {
-    confidence: 'medium',
+    confidence: closure === 'closed' && writeOnly.length > 0 ? 'high' : 'medium',
     reason:
       `Dispatcher emits [${writeOnly.map((k) => `'${k}'`).join(', ')}] in event.detail on CustomEvent channel `
       + `'${detail.channel}' that no visible listener reads. Weaker than the listener-sees-undefined case — `
-      + 'these fields may be dead payload, or a listener the analyzer did not scan (an inline-script '
-      + 'handler, a wrapper, a different repo) may still depend on them. Verify before dropping.'
+      + `these fields may be dead payload, or a listener the analyzer did not scan (${eventShapeHedge}) `
+      + 'may still depend on them. Verify before dropping.'
       + opaqueNote,
   };
 }
 
-function confidenceStructuralDrift(detail) {
+function confidenceStructuralDrift(detail, closure) {
   // Per the v1 emission rule, only readOnlyKeys-non-empty findings reach
   // here (importer accesses fields the export doesn't declare). The factual
   // claim is always true — confidence mostly tracks blast radius.
@@ -457,7 +472,7 @@ function confidenceStructuralDrift(detail) {
   };
 }
 
-function confidenceEventBridge(detail) {
+function confidenceEventBridge(detail, closure) {
   // A bridge is a coupling claim, not a bug claim — the listener
   // intentionally re-dispatches to a different host. Worth flagging because
   // refactoring either side without the other silently severs the bridge.
@@ -472,7 +487,7 @@ function confidenceEventBridge(detail) {
   };
 }
 
-function confidenceMissingTeardown(detail) {
+function confidenceMissingTeardown(detail, closure) {
   // The detector requires the registration to be observed AND no matching
   // teardown reachable in the same function body. The factual claim is
   // strong; confidence mostly modulates on registration kind.
@@ -502,7 +517,7 @@ function confidenceMissingTeardown(detail) {
   };
 }
 
-function confidenceAbortNeverCalled(detail) {
+function confidenceAbortNeverCalled(detail, closure) {
   return {
     confidence: 'high',
     reason:
@@ -514,7 +529,7 @@ function confidenceAbortNeverCalled(detail) {
   };
 }
 
-function confidenceHandlerIdentityMismatch(detail) {
+function confidenceHandlerIdentityMismatch(detail, closure) {
   return {
     confidence: 'high',
     reason:
@@ -526,7 +541,7 @@ function confidenceHandlerIdentityMismatch(detail) {
   };
 }
 
-function confidenceShapeDrift(detail) {
+function confidenceShapeDrift(detail, closure) {
   // shape-drift only emits when BOTH sides have at least one literal
   // shape observation AND the aggregated shapes disagree — so the
   // factual claim "these keys don't match" is always true for emitted
@@ -559,13 +574,16 @@ function confidenceShapeDrift(detail) {
         + opaqueNote,
     };
   }
+  const shapeDriftHedge = closure === 'closed'
+    ? 'a worker'
+    : 'a worker, a wrapper module, a different repo';
   return {
-    confidence: 'medium',
+    confidence: closure === 'closed' && writeOnly.length > 0 ? 'high' : 'medium',
     reason:
       `Writer stores [${writeOnly.map((k) => `'${k}'`).join(', ')}] on ${detail.storage}['${detail.key}'] `
       + 'that no visible reader accesses. This is weaker than the "reader sees undefined" case — the fields '
-      + 'may simply be dead data, or a reader the analyzer did not scan (a worker, a wrapper module, a '
-      + 'different repo) may still rely on them. Verify none of those consumers exist before concluding '
+      + `may simply be dead data, or a reader the analyzer did not scan (${shapeDriftHedge}) `
+      + 'may still rely on them. Verify none of those consumers exist before concluding '
       + 'it is safe to drop the write.'
       + opaqueNote,
   };
@@ -956,6 +974,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const maxDepth = opts.maxDepth ?? 6;
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const closure = opts.closure ?? 'open';
   // One cache for the whole run. Each source file is read + parsed on first
   // touch and reused by every subsequent detector and by import-graph. The
   // cache is deliberately per-run: no cross-run persistence, no content
@@ -1022,7 +1041,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const wrapped = [];
   for (const { detector, result } of detectorResults) {
     for (const f of result.findings) {
-      wrapped.push(wrap(f.kind ?? detector.findingKind, f, rootById, changedFilesAbs));
+      wrapped.push(wrap(f.kind ?? detector.findingKind, f, rootById, changedFilesAbs, closure));
     }
   }
 
@@ -1072,6 +1091,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
       base: gitInfo?.base ?? null,
       projectCount: projectRoots.length,
       changedFileCount: changedFilesAbs ? changedFilesAbs.size : null,
+      worldClosure: closure,
     },
     projects: projects.map((p) => ({ id: p.id, root: p.root })),
     summary: {
@@ -1092,7 +1112,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   };
 }
 
-function wrap(kind, detail, rootById, changedFilesAbs) {
+function wrap(kind, detail, rootById, changedFilesAbs, closure) {
   const relatedFiles = relatedFilesFor(detail);
   const touchesChange = Boolean(
     changedFilesAbs
@@ -1103,7 +1123,7 @@ function wrap(kind, detail, rootById, changedFilesAbs) {
       return changedFilesAbs.has(abs);
     }),
   );
-  const { confidence, reason: confidenceReason } = confidenceFor(kind, detail);
+  const { confidence, reason: confidenceReason } = confidenceFor(kind, detail, closure);
   return {
     id: findingIdFor(kind, detail),
     fingerprint: fingerprintFor(kind, detail),
