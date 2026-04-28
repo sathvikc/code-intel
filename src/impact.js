@@ -974,6 +974,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const maxDepth = opts.maxDepth ?? 6;
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const closure = opts.closure ?? 'open';
   // One cache for the whole run. Each source file is read + parsed on first
   // touch and reused by every subsequent detector and by import-graph. The
@@ -998,7 +999,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   let crossFileResolver = null;
   if (astCache) {
     const resolvedProjects = projectRoots.map(resolveProject);
-    const constantsIndex = buildConstantsIndex(resolvedProjects, { astCache, exclude, includeBuildArtifacts });
+    const constantsIndex = buildConstantsIndex(resolvedProjects, { astCache, exclude, includeBuildArtifacts, includeTestContext });
     crossFileResolver = makeCrossFileResolver(constantsIndex);
   }
 
@@ -1020,7 +1021,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   //    up the right `findingKind` wrapper label without a second map.
   const detectorResults = detectors.map((d) => ({
     detector: d,
-    result: d.module.analyzeProjects(projectRoots, { exclude, astCache, crossFileResolver, includeBuildArtifacts }),
+    result: d.module.analyzeProjects(projectRoots, { exclude, astCache, crossFileResolver, includeBuildArtifacts, includeTestContext }),
   }));
 
   // Project id -> project root (for resolving occurrence.file -> absolute).
@@ -1056,7 +1057,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   // 5. Blast radius, if we have a change set.
   let blastRadius = null;
   if (changedFilesAbs && changedFilesAbs.size > 0) {
-    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude, astCache, includeBuildArtifacts });
+    const graphResult = importGraph.analyzeProjects(projectRoots, [...changedFilesAbs], { maxDepth, exclude, astCache, includeBuildArtifacts, includeTestContext });
     blastRadius = graphResult.dependents.map((d) => ({
       file: d.file,
       project: projectIdFor(d.file, rootById),

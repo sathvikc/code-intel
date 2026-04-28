@@ -138,7 +138,7 @@ function buildResult({ target, projects, nodes, edges }) {
  */
 export function traceStorage(projectRoots, backend, key, opts = {}) {
   const projects = projectDescriptors(projectRoots);
-  const result = webStorage.analyzeProjects(projectRoots, { exclude: opts.exclude, includeBuildArtifacts: opts.includeBuildArtifacts });
+  const result = webStorage.analyzeProjects(projectRoots, { exclude: opts.exclude, includeBuildArtifacts: opts.includeBuildArtifacts, includeTestContext: opts.includeTestContext });
   const matching = result.findings.filter(
     (f) => f.storage === backend && f.key === key,
   );
@@ -163,7 +163,7 @@ export function traceStorage(projectRoots, backend, key, opts = {}) {
  */
 export function traceEvent(projectRoots, channel, opts = {}) {
   const projects = projectDescriptors(projectRoots);
-  const result = events.analyzeProjects(projectRoots, { exclude: opts.exclude, includeBuildArtifacts: opts.includeBuildArtifacts });
+  const result = events.analyzeProjects(projectRoots, { exclude: opts.exclude, includeBuildArtifacts: opts.includeBuildArtifacts, includeTestContext: opts.includeTestContext });
   const matching = result.findings.filter((f) => f.channel === channel);
   const target = {
     id: 'target',
@@ -185,7 +185,7 @@ export function traceEvent(projectRoots, channel, opts = {}) {
  */
 export function traceGlobal(projectRoots, name, opts = {}) {
   const projects = projectDescriptors(projectRoots);
-  const result = globals.analyzeProjects(projectRoots, { exclude: opts.exclude, includeBuildArtifacts: opts.includeBuildArtifacts });
+  const result = globals.analyzeProjects(projectRoots, { exclude: opts.exclude, includeBuildArtifacts: opts.includeBuildArtifacts, includeTestContext: opts.includeTestContext });
   const matching = result.findings.filter((f) => f.name === name);
   const target = {
     id: 'target',

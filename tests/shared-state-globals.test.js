@@ -375,3 +375,24 @@ test('analyzeProjects: message reflects delete-site count when present', () => {
   assert.ok(f, 'expected a shared-global-binding finding for X');
   assert.match(f.message, /declared\/assigned by 2 files \(plus 1 delete site\)/);
 });
+
+test('D21: classifyTestContext skip applies via shared-state-globals', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/app.js', `function MY_GLOBAL() {}`);
+  write(a, 'src/other.js', `function MY_GLOBAL() {}`);
+  write(a, 'src/app.test.js', `function MY_GLOBAL() {}`);
+
+  const skipped = analyzeProjects([a]); // default: skip test-context
+  // Only 2 files contribute (src/app.js + src/other.js), which is still ≥2 — but
+  // what matters is that the test file is NOT counted. We verify via includeTestContext.
+  const included = analyzeProjects([a], { includeTestContext: true });
+  const skippedF = skipped.findings.find((f) => f.kind === 'shared-global-binding' && f.name === 'MY_GLOBAL');
+  const includedF = included.findings.find((f) => f.kind === 'shared-global-binding' && f.name === 'MY_GLOBAL');
+  // skipped: 2 production files collide → finding present, but only 2 occurrences
+  assert.ok(skippedF, 'production-only collision should still be found');
+  assert.equal(skippedF.occurrences.length, 2, 'test stub should not be counted in default mode');
+  // included: all 3 files collide → 3 occurrences
+  assert.ok(includedF, 'finding should still exist with includeTestContext');
+  assert.equal(includedF.occurrences.length, 3, 'test stub counts as a third occurrence with --include-test-context');
+});

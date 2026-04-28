@@ -188,6 +188,7 @@ export function buildReverseGraph(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
   const aliasesByProject = new Map(projects.map((p) => [p.id, loadAliases(p.root)]));
   const graph = new Map();
@@ -195,7 +196,7 @@ export function buildReverseGraph(projectRoots, opts = {}) {
 
   for (const project of projects) {
     const { aliases } = aliasesByProject.get(project.id);
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       filesByProject.get(project.id).add(absFile);
       let src;
       let preparsed;
@@ -251,8 +252,8 @@ export function findDependents(graph, changedFiles, maxDepth = 6) {
  * One-shot convenience: build graph and compute dependents for a change set.
  */
 export function analyzeProjects(projectRoots, changedFiles, opts = {}) {
-  const { maxDepth = 6, exclude, astCache, includeBuildArtifacts } = opts;
-  const { graph, filesByProject, projects } = buildReverseGraph(projectRoots, { exclude, astCache, includeBuildArtifacts });
+  const { maxDepth = 6, exclude, astCache, includeBuildArtifacts, includeTestContext } = opts;
+  const { graph, filesByProject, projects } = buildReverseGraph(projectRoots, { exclude, astCache, includeBuildArtifacts, includeTestContext });
   // Filter changedFiles to absolute paths that actually exist in one of the
   // indexed projects. This tolerates paths outside our scan scope gracefully.
   const knownFiles = new Set();

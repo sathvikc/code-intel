@@ -164,6 +164,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
   const rootById = new Map(projects.map((p) => [p.id, p.root]));
   const aliasesByProject = new Map(projects.map((p) => [p.id, loadAliases(p.root)]));
@@ -173,7 +174,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const observationsByFile = new Map();
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       let code;
       let preparsed;
       if (astCache) {

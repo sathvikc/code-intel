@@ -247,10 +247,11 @@ export function analyzeStructuralDriftProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
 
   // Build a constants index that includes objectExportsByFile.
-  const index = buildConstantsIndex(projects, { exclude, astCache });
+  const index = buildConstantsIndex(projects, { exclude, astCache, includeBuildArtifacts, includeTestContext });
 
   let fileCount = 0;
   let errorCount = 0;
@@ -262,7 +263,7 @@ export function analyzeStructuralDriftProjects(projectRoots, opts = {}) {
 
   // ---------- Pass 1 & 2: walk all files ----------
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       fileCount++;
 
       // Parse or use cached AST.

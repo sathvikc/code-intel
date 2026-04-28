@@ -239,6 +239,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
 
   const readerNames = new Set();
@@ -246,7 +247,7 @@ export function analyzeProjects(projectRoots, opts = {}) {
 
   // Pass 1: parse every file, collect reader names.
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       let sf;
       if (astCache) {
         const cached = astCache.get(absFile);

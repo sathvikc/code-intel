@@ -35,16 +35,16 @@ const ANALYZER_COMMANDS = Object.fromEntries(
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--baseline <path>] [--markdown|--json] [--pretty] [--exclude <path>]
-                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts] [--world closed|open]
+                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts] [--include-test-context] [--world closed|open]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
-                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel shared-state    [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel shared-events   [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
-  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--world closed|open]
+                             [paths...] [--format json|mermaid] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel shared-state    [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel shared-events   [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel shared-globals  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel stale-captures  [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel paired-keys     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -121,6 +121,12 @@ Options:
                   artifacts (*.min.js, files under vendor/vendors/bundle/
                   bundles/chunks directories, files whose first line exceeds
                   1000 characters). Default: off (artifacts are skipped).
+  --include-test-context
+                  Re-enable walking files that are classified as test context
+                  (*.test.*, *.spec.*, jest.setup.*, vitest.config.*, files
+                  inside __tests__/ or __mocks__/ at any depth, files under
+                  top-level tests/ test/ e2e/ cypress/ playwright/). Default:
+                  off (test-context files are skipped). See D21.
   --world closed|open
                   Assert the closure of the world \`code-intel\` is
                   scanning. Default \`open\`: producers/consumers may
@@ -149,7 +155,7 @@ Options:
 `;
 
 function parseCommonArgs(argv) {
-  const args = { paths: [], pretty: false, help: false, exclude: [], includeBuildArtifacts: false, closure: 'open' };
+  const args = { paths: [], pretty: false, help: false, exclude: [], includeBuildArtifacts: false, includeTestContext: false, closure: 'open' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--pretty') args.pretty = true;
@@ -160,6 +166,7 @@ function parseCommonArgs(argv) {
       args.exclude.push(v);
     }
     else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
+    else if (a === '--include-test-context') args.includeTestContext = true;
     else if (a === '--world') {
       const v = argv[++i];
       if (v !== 'closed' && v !== 'open') {
@@ -191,6 +198,7 @@ function parseImpactArgs(argv) {
     help: false,
     exclude: [],
     includeBuildArtifacts: false,
+    includeTestContext: false,
     only: [],
     skip: [],
     noCache: false,
@@ -210,6 +218,7 @@ function parseImpactArgs(argv) {
       args.exclude.push(v);
     }
     else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
+    else if (a === '--include-test-context') args.includeTestContext = true;
     else if (a === '--baseline') {
       const v = argv[++i];
       if (!v) throw new Error(`--baseline requires a path to a prior impact --json output`);
@@ -269,6 +278,7 @@ async function runImpact(argv) {
     since: args.since,
     exclude: args.exclude,
     includeBuildArtifacts: args.includeBuildArtifacts,
+    includeTestContext: args.includeTestContext,
     only: args.only.length > 0 ? args.only : undefined,
     skip: args.skip.length > 0 ? args.skip : undefined,
     noCache: args.noCache || undefined,
@@ -330,6 +340,7 @@ function parseTraceArgs(argv) {
     help: false,
     exclude: [],
     includeBuildArtifacts: false,
+    includeTestContext: false,
     closure: 'open',
   };
   const setTarget = (t) => {
@@ -371,6 +382,7 @@ function parseTraceArgs(argv) {
       args.exclude.push(v);
     }
     else if (a === '--include-build-artifacts') args.includeBuildArtifacts = true;
+    else if (a === '--include-test-context') args.includeTestContext = true;
     else if (a === '--world') {
       const v = argv[++i];
       if (v !== 'closed' && v !== 'open') {
@@ -408,11 +420,12 @@ async function runTrace(argv) {
     result = trace.traceStorage(args.paths, args.target.backend, args.target.name, {
       exclude: args.exclude,
       includeBuildArtifacts: args.includeBuildArtifacts,
+      includeTestContext: args.includeTestContext,
     });
   } else if (args.target.kind === 'event') {
-    result = trace.traceEvent(args.paths, args.target.name, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts });
+    result = trace.traceEvent(args.paths, args.target.name, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts, includeTestContext: args.includeTestContext });
   } else {
-    result = trace.traceGlobal(args.paths, args.target.name, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts });
+    result = trace.traceGlobal(args.paths, args.target.name, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts, includeTestContext: args.includeTestContext });
   }
 
   if (args.format === 'mermaid') {
@@ -438,7 +451,7 @@ async function runAnalyzer(sub, argv) {
     process.stdout.write(USAGE);
     return 0;
   }
-  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts, closure: args.closure });
+  const result = cmd.analyzer.analyzeProjects(args.paths, { exclude: args.exclude, includeBuildArtifacts: args.includeBuildArtifacts, includeTestContext: args.includeTestContext, closure: args.closure });
   const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
   process.stdout.write(json + '\n');
   const summary = cmd.analyzer.summarize(result);

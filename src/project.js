@@ -52,6 +52,13 @@ const BUILD_ARTIFACT_DIR_RE = /(^|[\\/])(?:vendor|vendors|bundle|bundles|chunks)
 const LONG_LINE_THRESHOLD = 1000;
 const SAMPLE_BYTES = 4096;
 
+const TEST_FILENAME_TEST_RE = /\.test\.(?:js|jsx|ts|tsx|mjs|cjs)$/i;
+const TEST_FILENAME_SPEC_RE = /\.spec\.(?:js|jsx|ts|tsx|mjs|cjs)$/i;
+const SETUP_BASENAME_RE =
+  /^(?:jest|vitest)\.(?:setup|config)\.[^.]+$|^setup-(?:jest|tests)\.[^.]+$|^setup(?:Tests|Files)\.[^.]+$/i;
+const NESTED_DIR_PATTERNS = new Set(['__tests__', '__mocks__']);
+const TOP_LEVEL_TEST_DIRS = new Set(['tests', 'test', 'e2e', 'cypress', 'playwright']);
+
 export function classifyBuildArtifact(filePath) {
   if (BUILD_ARTIFACT_FILENAME_RE.test(filePath)) {
     return { kind: 'build-artifact', reason: 'filename-min' };
@@ -77,6 +84,32 @@ export function classifyBuildArtifact(filePath) {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch { /* ignore */ }
     }
+  }
+  return null;
+}
+
+export function classifyTestContext(filePath, projectRoot) {
+  const basename = path.basename(filePath);
+  if (TEST_FILENAME_TEST_RE.test(basename)) {
+    return { kind: 'test-context', reason: 'filename-test' };
+  }
+  if (TEST_FILENAME_SPEC_RE.test(basename)) {
+    return { kind: 'test-context', reason: 'filename-spec' };
+  }
+  if (SETUP_BASENAME_RE.test(basename)) {
+    return { kind: 'test-context', reason: 'setup-config' };
+  }
+  // Check path segments for __tests__ / __mocks__ at any depth.
+  const rel = projectRoot ? path.relative(projectRoot, filePath) : filePath;
+  const segments = rel.split(/[\\/]/);
+  for (const seg of segments.slice(0, -1)) {
+    if (NESTED_DIR_PATTERNS.has(seg)) {
+      return { kind: 'test-context', reason: `${seg}-dir` };
+    }
+  }
+  // Top-level test dirs: only first segment counts.
+  if (segments.length > 1 && TOP_LEVEL_TEST_DIRS.has(segments[0])) {
+    return { kind: 'test-context', reason: 'top-level-test-dir' };
   }
   return null;
 }
@@ -123,6 +156,7 @@ export function* walkSourceFiles(root, opts = {}) {
         if (!SOURCE_EXTENSIONS.has(path.extname(e.name))) continue;
         if (matchesAnyGlob(rel, excludes)) continue;
         if (!opts.includeBuildArtifacts && classifyBuildArtifact(full)) continue;
+        if (!opts.includeTestContext && classifyTestContext(full, root)) continue;
         yield full;
       }
     }

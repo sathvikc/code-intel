@@ -305,6 +305,7 @@ export function collectObjectExports(sourceFile) {
 export function buildConstantsIndex(projects, opts = {}) {
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
 
   const exportsByFile = new Map();
@@ -314,7 +315,7 @@ export function buildConstantsIndex(projects, opts = {}) {
 
   for (const project of projects) {
     const projectAliases = loadAliases(project.root)?.aliases ?? {};
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       let sourceFile;
       if (astCache) {
         const cached = astCache.get(absFile);

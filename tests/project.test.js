@@ -8,6 +8,7 @@ import {
   resolveProject,
   walkSourceFiles,
   classifyBuildArtifact,
+  classifyTestContext,
   SOURCE_EXTENSIONS,
   IGNORED_DIRS,
 } from '../src/project.js';
@@ -176,7 +177,9 @@ test('walkSourceFiles: mixing literal + glob patterns composes cleanly', () => {
   write(root, 'src/__tests__/nested.ts', '');
   write(root, 'examples/b.ts', '');
   write(root, 'e2e/c.ts', '');
-  const files = [...walkSourceFiles(root, { exclude: ['examples', '**/__tests__'] })]
+  // includeTestContext: true so that e2e/ is not default-skipped; this test
+  // is exercising exclude-glob composition, not the test-context filter.
+  const files = [...walkSourceFiles(root, { exclude: ['examples', '**/__tests__'], includeTestContext: true })]
     .map(f => path.relative(root, f)).sort();
   assert.deepEqual(files, [path.join('e2e', 'c.ts'), path.join('src', 'a.ts')]);
 });
@@ -229,6 +232,121 @@ test('walkSourceFiles with includeBuildArtifacts: true yields all files', () => 
     path.join('public', 'bundle.js'),
     path.join('public', 'vendor', 'lib.js'),
     path.join('src', 'foo.min.js'),
+    path.join('src', 'real.js'),
+  ]);
+});
+
+// ---------- classifyTestContext ----------
+
+test('classifyTestContext: returns null for ordinary source files', () => {
+  assert.equal(classifyTestContext('/root/src/app.ts', '/root'), null);
+  assert.equal(classifyTestContext('/root/src/utils/helper.js', '/root'), null);
+  assert.equal(classifyTestContext('/root/src/component.tsx', '/root'), null);
+});
+
+test('classifyTestContext: matches *.test.* suffixes', () => {
+  assert.deepEqual(classifyTestContext('/r/src/app.test.ts', '/r'), { kind: 'test-context', reason: 'filename-test' });
+  assert.deepEqual(classifyTestContext('/r/src/app.test.tsx', '/r'), { kind: 'test-context', reason: 'filename-test' });
+  assert.deepEqual(classifyTestContext('/r/src/app.test.js', '/r'), { kind: 'test-context', reason: 'filename-test' });
+  assert.deepEqual(classifyTestContext('/r/src/app.test.mjs', '/r'), { kind: 'test-context', reason: 'filename-test' });
+});
+
+test('classifyTestContext: matches *.spec.* suffixes', () => {
+  assert.deepEqual(classifyTestContext('/r/src/app.spec.ts', '/r'), { kind: 'test-context', reason: 'filename-spec' });
+  assert.deepEqual(classifyTestContext('/r/src/app.spec.js', '/r'), { kind: 'test-context', reason: 'filename-spec' });
+  assert.deepEqual(classifyTestContext('/r/src/app.spec.cjs', '/r'), { kind: 'test-context', reason: 'filename-spec' });
+});
+
+test('classifyTestContext: matches setup/config basenames', () => {
+  assert.deepEqual(classifyTestContext('/r/jest.setup.ts', '/r'), { kind: 'test-context', reason: 'setup-config' });
+  assert.deepEqual(classifyTestContext('/r/vitest.config.ts', '/r'), { kind: 'test-context', reason: 'setup-config' });
+  assert.deepEqual(classifyTestContext('/r/jest.config.js', '/r'), { kind: 'test-context', reason: 'setup-config' });
+  assert.deepEqual(classifyTestContext('/r/setupTests.ts', '/r'), { kind: 'test-context', reason: 'setup-config' });
+  assert.deepEqual(classifyTestContext('/r/setupFiles.ts', '/r'), { kind: 'test-context', reason: 'setup-config' });
+  assert.deepEqual(classifyTestContext('/r/setup-jest.js', '/r'), { kind: 'test-context', reason: 'setup-config' });
+  assert.deepEqual(classifyTestContext('/r/setup-tests.ts', '/r'), { kind: 'test-context', reason: 'setup-config' });
+});
+
+test('classifyTestContext: matches files inside __tests__/ at any depth', () => {
+  assert.deepEqual(classifyTestContext('/r/__tests__/foo.ts', '/r'), { kind: 'test-context', reason: '__tests__-dir' });
+  assert.deepEqual(classifyTestContext('/r/src/__tests__/bar.ts', '/r'), { kind: 'test-context', reason: '__tests__-dir' });
+  assert.deepEqual(classifyTestContext('/r/src/a/b/__tests__/deep.ts', '/r'), { kind: 'test-context', reason: '__tests__-dir' });
+});
+
+test('classifyTestContext: matches files inside __mocks__/ at any depth', () => {
+  assert.deepEqual(classifyTestContext('/r/__mocks__/foo.ts', '/r'), { kind: 'test-context', reason: '__mocks__-dir' });
+  assert.deepEqual(classifyTestContext('/r/src/__mocks__/bar.ts', '/r'), { kind: 'test-context', reason: '__mocks__-dir' });
+});
+
+test('classifyTestContext: matches top-level test dirs (first segment only)', () => {
+  assert.deepEqual(classifyTestContext('/r/tests/foo.ts', '/r'), { kind: 'test-context', reason: 'top-level-test-dir' });
+  assert.deepEqual(classifyTestContext('/r/test/foo.ts', '/r'), { kind: 'test-context', reason: 'top-level-test-dir' });
+  assert.deepEqual(classifyTestContext('/r/e2e/foo.ts', '/r'), { kind: 'test-context', reason: 'top-level-test-dir' });
+  assert.deepEqual(classifyTestContext('/r/cypress/foo.ts', '/r'), { kind: 'test-context', reason: 'top-level-test-dir' });
+  assert.deepEqual(classifyTestContext('/r/playwright/foo.ts', '/r'), { kind: 'test-context', reason: 'top-level-test-dir' });
+});
+
+test('classifyTestContext: does NOT match nested test dirs that are not first segment', () => {
+  assert.equal(classifyTestContext('/r/src/utils/tests/foo.ts', '/r'), null);
+  assert.equal(classifyTestContext('/r/src/test/foo.ts', '/r'), null);
+  assert.equal(classifyTestContext('/r/src/e2e/foo.ts', '/r'), null);
+});
+
+test('classifyTestContext: does NOT match app.testing.ts (substring, not suffix)', () => {
+  assert.equal(classifyTestContext('/r/src/app.testing.ts', '/r'), null);
+});
+
+// ---------- walkSourceFiles: test-context skipping ----------
+
+test('walkSourceFiles skips *.test.ts files by default', () => {
+  const root = mktmp();
+  write(root, 'src/app.ts', 'const x = 1;');
+  write(root, 'src/app.test.ts', 'test("x", () => {});');
+  const files = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'app.ts')]);
+});
+
+test('walkSourceFiles skips files inside __tests__/ by default', () => {
+  const root = mktmp();
+  write(root, 'src/app.ts', 'const x = 1;');
+  write(root, 'src/__tests__/app.ts', 'test("x", () => {});');
+  const files = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'app.ts')]);
+});
+
+test('walkSourceFiles skips files inside top-level tests/ by default', () => {
+  const root = mktmp();
+  write(root, 'src/app.ts', 'const x = 1;');
+  write(root, 'tests/integration.ts', 'test("x", () => {});');
+  const files = [...walkSourceFiles(root)].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [path.join('src', 'app.ts')]);
+});
+
+test('walkSourceFiles with includeTestContext: true yields test files too', () => {
+  const root = mktmp();
+  write(root, 'src/app.ts', 'const x = 1;');
+  write(root, 'src/app.test.ts', 'test("x", () => {});');
+  write(root, 'src/__tests__/unit.ts', 'test("u", () => {});');
+  write(root, 'tests/e2e.ts', 'test("e", () => {});');
+  const files = [...walkSourceFiles(root, { includeTestContext: true })].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [
+    path.join('src', '__tests__', 'unit.ts'),
+    path.join('src', 'app.test.ts'),
+    path.join('src', 'app.ts'),
+    path.join('tests', 'e2e.ts'),
+  ]);
+});
+
+test('walkSourceFiles: includeTestContext: true does not un-skip build artifacts (both rules independent)', () => {
+  const root = mktmp();
+  write(root, 'src/real.js', 'const x = 1;');
+  write(root, 'src/lib.min.js', 'const x=1;');
+  write(root, 'src/app.test.ts', 'test("x", () => {});');
+  // lib.min.js is a build artifact — still skipped even when includeTestContext: true
+  // app.test.ts is a test file — included when includeTestContext: true
+  const files = [...walkSourceFiles(root, { includeTestContext: true })].map(f => path.relative(root, f)).sort();
+  assert.deepEqual(files, [
+    path.join('src', 'app.test.ts'),
     path.join('src', 'real.js'),
   ]);
 });

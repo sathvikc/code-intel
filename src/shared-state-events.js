@@ -300,12 +300,13 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
   const crossFileResolver = opts.crossFileResolver;
   const groups = new Map();
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       let code;
       let preparsed;
       if (astCache) {
@@ -549,6 +550,7 @@ export function analyzeBridgeProjects(projectRoots, opts = {}) {
   const projects = projectRoots.map(resolveProject);
   const exclude = opts.exclude;
   const includeBuildArtifacts = opts.includeBuildArtifacts;
+  const includeTestContext = opts.includeTestContext;
   const astCache = opts.astCache;
   const crossFileResolver = opts.crossFileResolver;
 
@@ -558,7 +560,7 @@ export function analyzeBridgeProjects(projectRoots, opts = {}) {
   let errorCount = 0;
 
   for (const project of projects) {
-    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts })) {
+    for (const absFile of walkSourceFiles(project.root, { exclude, includeBuildArtifacts, includeTestContext })) {
       fileCount++;
       let code;
       let preparsed;
