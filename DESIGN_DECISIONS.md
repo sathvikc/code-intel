@@ -1383,3 +1383,44 @@ For some kinds the `patternFingerprint` is byte-identical to the existing `finge
 - **Split into two separate flags (`--no-cross-repo-hedges` and `--orphan-confidence-bump`).** Rejected: the two are aspects of the same user assertion (closed-world). Forcing them apart at the CLI surface means users have to know to set both; one of them is redundant if the other is set; and the two-flag form provides no orthogonal value worth the API cost.
 
 **Reasoning:** The confidence layer today is constrained to assume open-world because the alternative — guessing closure — would be wrong. Letting the user assert closure with a single CLI flag turns the tool's most apologetic confidence reasons ("may live in another repo we did not scan") into either dropped fragments or upgraded tiers, deterministically. The mechanical change is small (one flag, one option threaded through analyzers, one closure-aware branch in each `confidenceFor*` function). The behavioural change is large — under `--world closed`, orphan-side findings stop being second-class citizens of the report. This is also the cleanest forward-compatible point to slot the framework-context config (`rendering`, `navigation`) into when Q3 resolves, because closure is the same shape of axis: a user assertion about the project's deployment/world, consumed by confidence scoring.
+
+## D20 — `shared-state-events`: emit static `shared-event-channel` findings only when ≥2 distinct files touch the channel
+
+**Status:** active
+**Related:** D2 (recall over precision), D13 (registry), `shared-state-globals.js#analyzeProjects` (precedent: lines 286–294 of that module apply the same `≥2 distinct declaring files` filter), the `KEEPS custom-named channels even when listen-only` test in `tests/shared-state-events.test.js` (the implicit prior decision this entry supersedes)
+
+**Decision:** `shared-state-events.analyzeProjects` filters static (non-dynamic) `shared-event-channel` findings to require **`≥2 distinct files`** in the occurrence set. Single-file static channels — whether they're same-file dispatch+listen pairs, dispatch-only orphans, or listen-only orphans — are dropped at emission time. **Dynamic** findings are unchanged: they remain per-site by construction (each emits one occurrence with `dynamic: true`) and are not coupling claims to begin with.
+
+**Context:** Today `shared-state-events.js` emits every grouped channel including single-file groupings. Three concrete shapes that emit today and would drop under D20:
+
+1. **Same-file dispatch + listen** (`f.ts` does `dispatchEvent(new CustomEvent('foo'))` and `addEventListener('foo', h)`). The dispatcher–listener handshake exists, but it's encapsulated within one file. Refactors that miss one side are visible in the same editor buffer; standard lint/type tooling catches them.
+2. **Single-file dispatch-only** orphan (one file fires `'foo'`, nothing in scope listens). Useful as a *signal* but not a *coupling* — there is nothing to couple with in the scanned world.
+3. **Single-file listen-only** orphan (custom-named, e.g. `'profile:changed'`). Same as #2 inverted.
+
+Shape #2 and #3 are real signal in an *open-world* sense (the missing side may be in code we did not scan — another repo, an inline-script handler, a wrapper). But D19 already gives users a way to assert closure when that hedge is wrong, and `shared-state-events` is the *coupling* analyzer — orphan findings emitted under the `shared-event-channel` kind muddy what that kind means. The orphan signal is interesting, but it deserves its own kind/severity tier (a future `event-orphan` detector) rather than diluting `shared-event-channel`.
+
+**Why match `shared-state-globals` exactly:** `shared-state-globals` already filters `≥2 distinct declaring files` (`shared-state-globals.js#L286-294`) for the same reason — a global declared by exactly one file is not a *cross-bundle collision*. The two analyzers are conceptually parallel (both detect implicit cross-file channels named by string identity); the filter rule should be the same.
+
+**What v1 of D20 ships:**
+
+- `shared-state-events.analyzeProjects` adds a `f.dynamic === false && distinctFiles(f.occurrences) < 2 → drop` clause to the existing emission filter (alongside the `NATIVE_DOM_EVENTS` filter). One added clause; rest of the filter is unchanged.
+- `distinctFiles` is computed as `new Set(f.occurrences.map(o => '${o.project}::${o.file}'))`. Same shape as the projection used in `summarize` (lines 657–660) and in `shared-state-globals.js`.
+- The existing test at `tests/shared-state-events.test.js#L335` ("KEEPS custom-named channels even when listen-only (no dispatch)") is **inverted**: under D20, single-file custom-named listen-only is *dropped*. The new assertion is "drops single-file listen-only custom-named channel."
+- Two other tests (line 251 "skips node_modules" and line 263 "schema shape") need their fixtures expanded to multi-file. Their *intent* (smoke that ignored dirs are skipped; smoke that the schema shape is correct) is preserved.
+
+**Schema impact (D3):** behavioural, not structural. The schema is unchanged — every emitted finding still carries `kind: 'shared-event-channel'` with the same fields. What changes is *which* findings are emitted: strictly fewer (single-file static channels disappear). Existing consumers that filter or count by kind see fewer rows; consumers that read individual fields see no change. This is a **soft-additive** change in the same sense as the D14 cache (no schema diff, behaviour shift). No `SCHEMA_VERSION` bump.
+
+**Out of scope (deferred):**
+
+- **An `event-orphan` finding kind** for the dropped signals (single-file dispatch-only / listen-only). Real signal worth surfacing, but not under the `shared-event-channel` (coupling) kind. Logged separately in `BACKLOG.md`. Not blocking D20.
+- **The same threshold for `shared-state-web-storage`.** Single-file storage findings are *intentionally kept* — `confidenceFor` has a single-file branch (`confidenceStorageKey`'s final return) that emits at `medium` confidence with reasoning that the in-file shape-drift hazard is real. Storage and events are not symmetric here: storage value contracts (JSON serialization shape) survive a function boundary in a way event-channel name handshakes do not. Storage stays.
+- **Dynamic event findings.** Per-site by construction; they're factual emissions, not coupling claims. Their tier and presentation are a separate question.
+
+**Alternatives considered:**
+
+- **Demote single-file static to `severity: 'info'` instead of dropping.** Rejected: adds a new tier-consumption concern (consumers must filter by severity to skip noise), introduces an asymmetry with `shared-state-globals` (which drops, not demotes), and dilutes what the `shared-event-channel` kind means (some are couplings, some are orphans). The cleaner answer is a separate `event-orphan` kind in a future task.
+- **Filter only single-file dispatch-only OR listen-only orphans, but keep single-file dispatch+listen pairs.** Rejected: more conditional logic, and the same-file pair *is* still encapsulated within one file — a refactor would catch it via tooling. Plus it diverges from the `shared-state-globals` precedent.
+- **Add a CLI flag to control the threshold (`--min-files <N>`).** Rejected: premature configuration. The default behaviour should produce useful output; a knob is appropriate when there's a demonstrated need to override. Today there is none.
+- **Apply the threshold but emit a per-finding "dropped because single-file" diagnostic on stderr.** Rejected: noise on stderr, no structured consumer for it. If we later want this signal back, an `event-orphan` kind is the right channel.
+
+**Reasoning:** `shared-state-events` is the *coupling* analyzer for CustomEvent channels. A coupling is by definition a relationship between two or more things in different scopes; a channel touched by one file is not a coupling claim. The current behaviour mixes orphan signals into the coupling kind, which is exactly the shape of false positive that pollutes the report and trains AI agents (and humans) to discount the analyzer's output. Filter strictly on the property that matches the kind's name — `shared` between distinct files — and surface the orphan signal separately when there's a clear case for it.
