@@ -1548,3 +1548,79 @@ The catalogue lives as a `const PLATFORM_PROPS = new Set([...])` at the top of `
 - **Per-handler transparency heuristic** — flag `medium` if the handler has an explicit `set` trap that doesn't call `Reflect.set` / `target[prop] = value`; `low` otherwise. Tempting and probably correct, but requires inspecting the handler object literal. Defer to v2; v1 ships with one severity tier.
 
 **Reasoning:** Per VISION the engine catalogue is the product, and "runtime bugs with a static signature" is an explicit third category alongside cross-file coupling and module-scope lifecycle bugs. P8 is one of the two charter patterns named under that category (P7 the other), with a real production incident as its source. The static signal is unambiguous (a single AST shape filtered by two small catalogues). The detection lives in roughly 150 lines of new code, no new infrastructure. After D17–D21's noise-reduction streak, this resumes catalogue growth on a real-incident pattern with the smallest viable slice — exactly the "ship partial, iterate" stance the workflow rules demand. P7 follows as a separate slice once P8's smell-tier shape is proven on real code.
+
+## D23 — `stateful-shared-regex`: per-declaration detector for `/g`-or-`/y` regexes shared across `test`/`exec` call sites (P17)
+
+**Status:** active
+**Related:** P17 (the source pattern), `VISION.md` "Runtime bugs with a static signature" (third engine-scope category — same family as P7 / P8 / D22), D2 (recall over precision — emit on the unambiguous static fact, let the reviewer judge multi-invocation), D5 (syntactic only — no type checker, no runtime trace), D10 (describe-don't-predict — the finding states the static observation; the runtime impact is the consequence the reviewer reasons about), D13 (detector registry — single-line registration), D18 (`patternFingerprint` location-free identity), D22 (the most recent per-site detector — same shape).
+
+**Decision:** A new analyzer `stateful-shared-regex` detects module-scope `const` bindings initialized to a regex with the `g` or `y` flag, where the same binding is later invoked with `.test(...)` or `.exec(...)` in the same file. Each qualifying declaration plus its use-sites groups into one finding. **No cross-file threshold and no multi-call-site threshold** — a single use-site is enough; the regex declaration itself is the smell, the use-site demonstrates the bug surface. Findings ship at `severity: 'warning'`, `confidence: 'medium'` by default. Schema-additive: new `kind: 'stateful-shared-regex'`, no existing field changes.
+
+**Why per-site (no threshold):** The runtime bug is intrinsic to the declaration. `const RE = /pat/g` at module scope is shared across every call site in the module's lifetime; `RE.test()` and `RE.exec()` advance `lastIndex` after every match and reset it to `0` only after the first non-match. Even a single use-site inside an exported function, a class method, or any function body that's invoked more than once is broken. v1 cannot prove multi-invocation statically (would require call-graph analysis), but per D2 recall-first the right move is to emit on every `RE.test`/`RE.exec` use and trust the reviewer to dismiss the rare lone-call-at-module-top case. The static signal — a `/g` regex declared once, used at all — is itself anomalous (the only reason to use the `g` flag is to call `test`/`exec` repeatedly or to use the regex with `String.replace`/`String.matchAll`, which don't trigger this bug class).
+
+**What v1 detects:**
+
+- A `VariableDeclaration` at **module scope** (top-level statement, not inside any function, class method, or block) where:
+  - The declarator is `const` (not `let` / `var` — see "Out of scope" below).
+  - The initializer is either:
+    - A `RegularExpressionLiteral` (e.g. `/\S+@\S+/g`) whose flags string contains `g` or `y`.
+    - A `NewExpression` with callee identifier `RegExp`, a string-literal first argument (the pattern), and a string-literal second argument (the flags) containing `g` or `y`.
+- The same binding name later appears as the receiver in a `CallExpression` of shape `<name>.test(...)` or `<name>.exec(...)` **in the same file**.
+
+The v1 detection is **syntactic and intra-file**. No import-graph chase, no class-static-field handling, no inline-regex-at-call-site detection, no aliased-identifier follow.
+
+**Use-site rule:** For each qualifying declaration, scan the same source file's AST for `PropertyAccessExpression` whose left identifier matches the binding name and whose right name is `test` or `exec`, immediately followed by a `CallExpression`. Each such call is one occurrence; the declaration itself contributes a `declare`-op occurrence. **Emit when at least one `test`/`exec` call site exists.** Pure declaration with no use is silent (could be exported or used with `String.replace`, neither of which is the P17 bug class).
+
+**Finding envelope:**
+
+```js
+{
+  kind: 'stateful-shared-regex',
+  name: '<binding-name>',          // e.g. 'EMAIL_RE'
+  pattern: '<regex-source>',        // e.g. '\\S+@\\S+'
+  flags: '<flags>',                 // e.g. 'g', 'gi', 'y'
+  fingerprint: '<hash>',             // location-aware (kind + project + file + name + pattern + flags)
+  patternFingerprint: '<hash>',      // location-free (kind + name + pattern + flags), per D18
+  severity: 'warning',
+  confidence: 'medium',
+  confidenceReason: '<paragraph>',
+  occurrences: [
+    { project, file, line, column, op: 'declare', snippet },
+    { project, file, line, column, op: 'test',    snippet },
+    { project, file, line, column, op: 'exec',    snippet },
+    // ... ordered by file:line:column
+  ]
+}
+```
+
+**Grouping rule:** one finding per `(project, file, name)` triple. Module-scope bindings are file-local in v1's syntactic frame, so cross-file grouping is meaningless here. If two files happen to declare the same name with the same pattern, they emit two findings — that's correct: each file's regex is its own state-machine.
+
+**Severity / confidence stance:** `warning` (not `critical`) because v1 can't prove multi-invocation; the lone-call-at-module-top edge case is benign. `medium` confidence because the static fact (a `/g`/`/y` regex used with `test`/`exec`) is highly reliable, and the runtime implication (cross-call `lastIndex` poisoning) is the concrete bug class P17 documents — but multi-invocation likelihood (the trigger) is what determines whether the bug actually fires. The `confidenceReason` text names the failure mode explicitly: *"A regex with the `g` or `y` flag carries `lastIndex` across `.test()` / `.exec()` calls. The second call after a successful match returns `false` for the same input. If `<name>` is invoked more than once over the lifetime of the module, results will silently flip. The fix is either to drop the `g`/`y` flag, declare the regex inside the function so each call gets a fresh instance, or reset `<name>.lastIndex = 0` before each call."*
+
+**Out of scope (deferred to v2 / explicit follow-ups, logged as recall gaps):**
+
+- **`let` / `var` declarations.** Even when not reassigned, they require a reassignment-check pass (D8 has the helper but it isn't lifted to a shared module yet — BACKLOG item). v1 only handles `const`. Real-codebase regex bindings are overwhelmingly `const`; recall gap is small.
+- **Class-scope `static` fields.** `class Foo { static RE = /pat/g; ... }` shares state across all instances — same bug. v1 does not walk class members. Defer to v1.5 once the class walker pattern is reused by another detector.
+- **Class instance fields and local-scope bindings.** Explicitly **not bugs** (each instance / each call gets a fresh regex). Detector must not emit on these — the module-scope filter handles this naturally.
+- **Cross-file use-sites.** `// regex.js: export const RE = /pat/g; // user.js: import { RE } from './regex.js'; RE.test(s);` — v1 misses the use-site because it's in another file. Tractable v2 (import-graph + binding-name match) but defers to keep the v1 surface tight.
+- **Aliased-identifier uses.** `const r = RE; r.test(s);` — Q1-style alias-follow; defer.
+- **Dotted regex.** `const cfg = { re: /pat/g }; cfg.re.test(s);` — out-of-scope structural shape.
+- **Inline regex at call site.** `/pat/g.test(s)` is its own footgun (a fresh regex literal *each call*, so `lastIndex` resets every time — actually NOT a bug). Some real codebases do this intending re-use. Distinguishing the safe case (literal each call) from a misunderstanding requires tracking whether the literal is in a hot path. Defer; not the same bug class anyway.
+- **`new RegExp(<dynamic>)` constructors.** v1 requires both arguments to be string literals. Dynamic patterns (`new RegExp(userInput, 'g')`) are out — even more cautious territory; defer.
+- **`String.prototype.replace` / `matchAll` / `split`.** These methods do *not* exhibit the `lastIndex` bug — `replace(/g/, fn)` resets `lastIndex` internally, `matchAll` requires `g` and is the recommended pattern, `split` doesn't depend on `lastIndex`. v1 must not emit on findings whose only use-sites are these methods. Mechanically: detect *only* `test` / `exec` calls; ignore everything else.
+- **`<name>.lastIndex = 0` resets recognized as a fix.** A module that explicitly resets `lastIndex` before each call has fixed the bug. v1 emits anyway and the `confidenceReason` mentions the reset as the fix; v2 could downgrade to `info` when the reset is observed. Defer.
+- **Trace integration.** `trace --regex <name>` star-topology of declarations and call sites. Not v1; pure follow-on.
+
+**Schema impact (D3):** purely additive. New `kind` value (`stateful-shared-regex`); existing kinds unchanged. New `op` values (`'declare'`, `'test'`, `'exec'`) on the new kind; `op` is a per-kind vocabulary already (D6 / D7), so this is consistent with precedent. No `SCHEMA_VERSION` bump.
+
+**Alternatives considered:**
+
+- **Threshold ≥2 call sites.** Rejected: a single call inside a function is the canonical bug shape (the function gets invoked more than once over module lifetime). v1 cannot prove multi-invocation without call-graph analysis. ≥1 use-site keeps recall correct; reviewer dismisses the rare edge case.
+- **Catalogue-gated regexes (only flag specific patterns like email or URL validators).** Rejected: the bug is intrinsic to `/g`/`/y` flag + `test`/`exec` shape, not the pattern. Catalogue-gating defeats recall.
+- **Detect inline `/pat/g.test()` as part of v1.** Rejected: the pattern is a different bug class (literal-each-call doesn't share state); conflating the two would force two confidence stories on one kind. Out of scope; revisit if a real codebase shows it as common.
+- **Confidence `low` instead of `medium`.** Considered. Settled on `medium` because the static fact is highly reliable; only the multi-invocation trigger is uncertain. `low` would understate the signal.
+- **Confidence `high` when the use-site is inside an exported function or a class method.** Tempting (these are clearly multi-invocable). Defer to v2 — adds a separate AST walk; not load-bearing for v1 ship.
+- **Fold into `stale-captures` as a new source kind.** Rejected: P5 is module-scope read-once capture of a dynamic value (snapshot semantics). P17 is module-scope mutable regex state mutated by every call (sharing semantics). Different bug shapes; cleaner as its own kind.
+- **Emit a recall-mode `info`-tier finding for declared-but-unused `/g` regexes** (no `test`/`exec` calls). Rejected: too noisy; declared-but-unused regexes might be exported, used with `replace`, or just dead code. Out of scope.
+
+**Reasoning:** Per VISION the engine catalogue is the product, and "runtime bugs with a static signature" remains the underserved third category. P17 is documented as a canonical `/g`-flag footgun in MDN's `RegExp` reference and "You Don't Know JS" — pedigree per `PATTERNS.md` P17's Source line. The static signal is unambiguous (one AST shape, no fold rules, no graph traversal); the detection lives in roughly 200 lines of new code with no new infrastructure. After D22's per-site `proxied-platform-global` ship, this continues catalogue growth on the same recall-first/no-threshold/no-cross-file shape — proving that the per-site smell-detector pattern is the right engine for this category. P14 / P20 / P7 follow as separate slices once D23's smaller surface is in production.
