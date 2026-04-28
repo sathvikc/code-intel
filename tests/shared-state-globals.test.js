@@ -12,6 +12,8 @@ import {
   ANALYZER_ID,
 } from '../src/shared-state-globals.js';
 
+import { analyzeProjects as impactAnalyzeProjects } from '../src/impact.js';
+
 import ts from 'typescript';
 
 // ---------- fileIsModuleLike ----------
@@ -329,4 +331,47 @@ test('integration: schema shape', () => {
   assert.ok(typeof o.column === 'number' && o.column > 0);
   assert.ok(typeof o.snippet === 'string');
   assert.equal(typeof o.isModuleLike, 'boolean');
+});
+
+test('analyzeProjects: two files only delete-ing the same global produce 0 findings', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.js', `delete globalThis.X;`);
+  write(a, 'src/b.js', `delete window.X;`);
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 0);
+});
+
+test('analyzeProjects: one declarer plus one delete-only file produce 0 findings', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.js', `function X() {}`);
+  write(a, 'src/b.js', `delete window.X;`);
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 0);
+});
+
+test('analyzeProjects: two declarers plus a delete-only file emit one finding with all three occurrences', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.js', `function X() {}`);
+  write(a, 'src/b.js', `function X() {}`);
+  write(a, 'src/c.js', `delete window.X;`);
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 1);
+  const f = result.findings[0];
+  assert.equal(f.occurrences.length, 3);
+  assert.ok(f.occurrences.some(o => o.op === 'remove'));
+});
+
+test('analyzeProjects: message reflects delete-site count when present', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.js', `function X() {}`);
+  write(a, 'src/b.js', `function X() {}`);
+  write(a, 'src/c.js', `delete window.X;`);
+  const result = impactAnalyzeProjects([a]);
+  const f = result.findings.find(x => x.kind === 'shared-global-binding' && x.detail.name === 'X');
+  assert.ok(f, 'expected a shared-global-binding finding for X');
+  assert.match(f.message, /declared\/assigned by 2 files \(plus 1 delete site\)/);
 });

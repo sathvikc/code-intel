@@ -280,12 +280,17 @@ export function analyzeProjects(projectRoots, opts = {}) {
   }
 
   // Only emit findings for names that cross ≥2 DISTINCT files — the
-  // cross-bundle collision case. Multiple writes/declarations inside one
-  // file are intra-file code, not coupling.
+  // cross-bundle collision case. Only `declare` and `assign` ops count
+  // toward the threshold; `remove` (delete) sites are included in the
+  // occurrences payload but do not trigger the collision by themselves.
   const findings = [...groups.values()]
     .filter(f => {
-      const files = new Set(f.occurrences.map(o => `${o.project}::${o.file}`));
-      return files.size >= 2;
+      const declaringFiles = new Set(
+        f.occurrences
+          .filter(o => o.op === 'declare' || o.op === 'assign')
+          .map(o => `${o.project}::${o.file}`),
+      );
+      return declaringFiles.size >= 2;
     })
     .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 

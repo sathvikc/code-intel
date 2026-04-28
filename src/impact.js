@@ -586,8 +586,17 @@ function messageFor(kind, detail) {
       const label = describeKey(detail.channel, detail.dynamic, detail.expression);
       return `CustomEvent channel ${label} used by ${files.size} files${crossProj}`;
     }
-    case 'shared-global-binding':
-      return `Global name '${detail.name}' declared by ${files.size} files${crossProj}`;
+    case 'shared-global-binding': {
+      const declaringFiles = new Set(
+        detail.occurrences
+          .filter(o => o.op === 'declare' || o.op === 'assign')
+          .map(o => `${o.project}:${o.file}`),
+      );
+      const deleteCount = detail.occurrences.filter(o => o.op === 'remove').length;
+      const declarerNote = `declared/assigned by ${declaringFiles.size} files`;
+      const deleteNote = deleteCount > 0 ? ` (plus ${deleteCount} delete site${deleteCount === 1 ? '' : 's'})` : '';
+      return `Global name '${detail.name}' ${declarerNote}${crossProj}${deleteNote}`;
+    }
     case 'stale-module-capture':
       return `'${detail.name}' captures dynamic source at module scope (via ${detail.capturedVia})`;
     case 'paired-keys':
