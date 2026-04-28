@@ -30,6 +30,7 @@ import * as eventBridge from '../event-bridge.js';
 import * as structuralDrift from '../structural-drift.js';
 import * as lifecycleCleanupDrift from '../lifecycle-cleanup-drift.js';
 import * as proxiedPlatformGlobal from '../proxied-platform-global.js';
+import * as statefulSharedRegex from '../stateful-shared-regex.js';
 
 /**
  * @typedef {object} DetectorEntry
@@ -196,6 +197,24 @@ export const DETECTORS = [
         .map(([h, n]) => `    ${h}: ${n}`),
       `  by-property:`,
       ...Object.entries(s.byProperty ?? {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([p, n]) => `    ${p}: ${n}`),
+    ],
+  },
+  {
+    id: 'stateful-regex',
+    module: statefulSharedRegex,
+    findingKind: 'stateful-shared-regex',
+    summarize: (s) => [
+      `code-intel / stateful-shared-regex`,
+      `projects:        ${s.projectCount}`,
+      `findings:        ${s.findingCount}`,
+      `  by-flag:`,
+      ...Object.entries(s.byFlag ?? {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([f, n]) => `    ${f}: ${n}`),
+      `  by-pattern:`,
+      ...Object.entries(s.byPattern ?? {})
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([p, n]) => `    ${p}: ${n}`),
     ],

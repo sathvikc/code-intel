@@ -138,6 +138,10 @@ function severityFor(kind, detail) {
       // A Proxy may be transparent (Reflect.*-based handler), so not
       // automatically critical. Warning: reviewer reads the handler.
       return 'warning';
+    case 'stateful-shared-regex':
+      // v1 cannot prove multi-invocation; single-call-at-module-top is
+      // benign. Warning: the reviewer judges the enclosing call context.
+      return 'warning';
     default:
       return 'info';
   }
@@ -196,6 +200,8 @@ function confidenceFor(kind, detail, closure) {
       return confidenceDuplicateSvgId(detail, closure);
     case 'proxied-platform-global':
       return confidenceProxiedPlatformGlobal(detail, closure);
+    case 'stateful-shared-regex':
+      return confidenceStatefulSharedRegex(detail, closure);
     default:
       return { confidence: 'medium', reason: 'No specific confidence rule for this finding kind.' };
   }
@@ -573,6 +579,31 @@ function confidenceProxiedPlatformGlobal(detail, closure) {
   };
 }
 
+function confidenceStatefulSharedRegex(detail, closure) {
+  // Static fact (a /g-or-/y regex used with .test/.exec) is highly
+  // reliable. Runtime trigger (multi-invocation) is the uncertainty.
+  // Confidence MEDIUM; reviewer judges from use-site context.
+  const useSiteCount = detail.occurrences.filter(
+    (o) => o.op === 'test' || o.op === 'exec',
+  ).length;
+  const useSiteText =
+    useSiteCount > 1
+      ? `${useSiteCount} test/exec call sites`
+      : 'one test/exec call site';
+  return {
+    confidence: 'medium',
+    reason:
+      `Module-scope const '${detail.name}' is a regex with the '${detail.flags}' flag(s) `
+      + `and ${useSiteText} in this file. With the 'g' or 'y' flag, RegExp.prototype.test() `
+      + `and exec() carry lastIndex across calls — the second call after a successful match `
+      + `returns false for the same input. If '${detail.name}' is invoked more than once `
+      + `over the lifetime of this module (any function call, exported handler, class method, `
+      + `or loop counts), results will silently flip. Fix: drop the 'g'/'y' flag if unneeded, `
+      + `declare the regex inside the function so each call gets a fresh instance, or reset `
+      + `'${detail.name}.lastIndex = 0' before each call.`,
+  };
+}
+
 function confidenceShapeDrift(detail, closure) {
   // shape-drift only emits when BOTH sides have at least one literal
   // shape observation AND the aggregated shapes disagree — so the
@@ -759,6 +790,10 @@ function findingIdFor(kind, detail) {
   if (kind === 'proxied-platform-global') {
     return `${kind}:${detail.host}.${detail.property}`;
   }
+  if (kind === 'stateful-shared-regex') {
+    const occ0 = detail.occurrences[0];
+    return `${kind}:${occ0.project}:${occ0.file}:${detail.name}`;
+  }
   const key = detail.key ?? detail.channel ?? detail.name ?? 'anon';
   return `${kind}:${key}`;
 }
@@ -888,6 +923,14 @@ function fingerprintFor(kind, detail) {
       // fingerprintFor === patternFingerprintFor for this kind.
       parts.push(detail.host ?? '', detail.property ?? '');
       break;
+    case 'stateful-shared-regex': {
+      // Location-aware: kind + project + file + name + pattern + flags.
+      // Two files with the same name+pattern produce two findings whose
+      // fingerprints differ. Different from patternFingerprint (per D18/D23).
+      const loc = detail.occurrences[0] ?? {};
+      parts.push(loc.project ?? '?', loc.file ?? '?', detail.name ?? '', detail.pattern ?? '', detail.flags ?? '');
+      break;
+    }
     default:
       // Unknown kind: hash whatever identity the detail carries, so at
       // least the fingerprint is deterministic per-run.
@@ -953,6 +996,12 @@ function patternFingerprintFor(kind, detail) {
       // Location-free (kind + host + property). Same recipe as
       // fingerprintFor for this kind — fingerprint === patternFingerprint.
       parts.push(detail.host ?? '', detail.property ?? '');
+      break;
+    case 'stateful-shared-regex':
+      // Location-free (kind + name + pattern + flags). Two findings in
+      // different files with same name+pattern+flags collapse onto the
+      // same patternFingerprint per D18.
+      parts.push(detail.name ?? '', detail.pattern ?? '', detail.flags ?? '');
       break;
     default:
       parts.push(JSON.stringify(detail));

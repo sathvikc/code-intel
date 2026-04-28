@@ -741,3 +741,30 @@ test('impact: proxied-platform-global finding is decorated with correct severity
     'fingerprint and patternFingerprint should be equal for proxied-platform-global (static coupling kind)');
   assert.equal(f.id, 'proxied-platform-global:window.history');
 });
+
+// ---------- stateful-shared-regex decoration ----------
+
+test('impact: stateful-shared-regex finding is decorated with correct severity/confidence/fingerprint/id', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/util.ts', `const EMAIL_RE = /\\S+@\\S+/g;\nexport function isEmail(s) { return EMAIL_RE.test(s); }`);
+
+  const result = analyzeProjects([a]);
+  const f = result.findings.find((x) => x.kind === 'stateful-shared-regex');
+  assert.ok(f, 'expected a stateful-shared-regex finding');
+
+  assert.equal(f.severity, 'warning');
+  assert.equal(f.confidence, 'medium');
+  assert.ok(typeof f.confidenceReason === 'string' && f.confidenceReason.includes('lastIndex'),
+    'confidenceReason should mention lastIndex');
+  assert.ok(typeof f.fingerprint === 'string' && /^[0-9a-f]{16}$/.test(f.fingerprint),
+    'fingerprint should be 16-char hex');
+  assert.ok(typeof f.patternFingerprint === 'string' && /^[0-9a-f]{16}$/.test(f.patternFingerprint),
+    'patternFingerprint should be 16-char hex');
+  assert.notEqual(f.fingerprint, f.patternFingerprint,
+    'fingerprint and patternFingerprint must differ for stateful-shared-regex (location-aware vs location-free per D23)');
+  assert.ok(f.id.startsWith('stateful-shared-regex:'),
+    'id should start with stateful-shared-regex:');
+  assert.ok(f.id.includes(':EMAIL_RE'),
+    'id should include the binding name');
+});

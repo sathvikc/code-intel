@@ -46,6 +46,7 @@ const USAGE = `Usage:
   code-intel shape-drift     [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
   code-intel duplicate-static-svg-id [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
   code-intel proxied-globals [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+  code-intel stateful-regex [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
 
 Subcommands:
   impact          Unified report across all detectors. With --since <ref>, filters
@@ -83,6 +84,9 @@ Subcommands:
   proxied-globals Detect Proxy-replacement of browser platform globals
                   (window.history = new Proxy(...), window.fetch = new Proxy(...),
                   …). Per-site recall-first; no cross-file threshold.
+  stateful-regex  Detect module-scope /g or /y regexes used with .test()/.exec()
+                  (lastIndex carries across calls and silently flips results).
+                  Per-declaration recall-first; intra-file v1.
 
 Args:
   paths           One or more project roots. Defaults to "." if omitted.
