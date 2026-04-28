@@ -26,6 +26,7 @@ counterpart in the other app to exercise cross-project detection.
 | Classic-script collision — both apps define the same top-level `function parseCookie(...)` in a .js script, later load overwrites earlier | `app-a/src/cookies/`, `app-b/src/cookies/` | `shared-globals` ✓ |
 | Self-assign (must-not-emit) — one file with multiple `window.X = …` writes to the same global; intra-file, not a collision | `app-a/src/globals/` | `shared-globals` ✓ (no finding) |
 | Stale module-scope capture — `const accountTier = getAccountTier()` at module scope, value frozen at import time | `app-a/src/account/` | `stale-captures` ✓ |
+| Default-skip of test-context files (vitest setup + `*.test.ts` + `__tests__/`) — production findings only by default; opt back in with `--include-test-context` | `examples/test-context/` | walk-layer skip ✓ (D21) |
 
 A ✓ means the analyzer already detects the pattern (run the command in
 the next section to see it). "Planned" means the pattern is a fixture
