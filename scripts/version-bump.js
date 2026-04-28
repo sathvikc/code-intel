@@ -3,10 +3,17 @@
 // Mapping:
 //   - BREAKING CHANGE footer OR `<type>!:`   → major
 //   - feat                                    → minor
-//   - fix, perf, refactor, docs, style,       → patch
-//     test, build, ci, chore, revert
+//   - fix, perf, refactor, style,             → patch
+//     test, build, ci, revert
+//   - docs, chore                             → none (no version bump)
 //
-// Every valid commit bumps the version. Invalid messages return an error.
+// `docs` and `chore` are explicitly non-functional changes from the
+// user-facing perspective; bumping the published version on them is
+// noise. Breaking variants (`docs!:`, `chore!:`) still bump major —
+// the bang is the user asserting a public-contract impact regardless
+// of the type label.
+//
+// Invalid messages return an error.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +49,7 @@ export function determineBump(message) {
     return { bump: 'major', type, breaking: true };
   }
   if (type === 'feat') return { bump: 'minor', type, breaking: false };
+  if (type === 'docs' || type === 'chore') return { bump: 'none', type, breaking: false };
   return { bump: 'patch', type, breaking: false };
 }
 
@@ -54,6 +62,7 @@ export function applyBump(version, bump) {
   if (bump === 'major') return `${maj + 1}.0.0`;
   if (bump === 'minor') return `${maj}.${min + 1}.0`;
   if (bump === 'patch') return `${maj}.${min}.${pat + 1}`;
+  if (bump === 'none') return version;
   throw new Error(`Unknown bump: ${bump}`);
 }
 
@@ -73,8 +82,10 @@ if (isMain) {
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
   const from = pkg.version;
   const to = applyBump(from, result.bump);
-  pkg.version = to;
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  if (to !== from) {
+    pkg.version = to;
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+  }
   console.log(
     JSON.stringify({ type: result.type, bump: result.bump, from, to }),
   );

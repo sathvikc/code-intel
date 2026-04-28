@@ -26,12 +26,22 @@ test('refactor → patch', () => {
   assert.equal(determineBump('refactor: extract walker').bump, 'patch');
 });
 
-test('docs → patch', () => {
-  assert.equal(determineBump('docs: clarify non-goals').bump, 'patch');
+test('docs → none (no version bump)', () => {
+  assert.equal(determineBump('docs: clarify non-goals').bump, 'none');
 });
 
-test('chore → patch', () => {
-  assert.equal(determineBump('chore: bump deps').bump, 'patch');
+test('chore → none (no version bump)', () => {
+  assert.equal(determineBump('chore: bump deps').bump, 'none');
+});
+
+test('docs! → major (breaking overrides none)', () => {
+  const r = determineBump('docs!: remove deprecated section');
+  assert.equal(r.bump, 'major');
+  assert.equal(r.breaking, true);
+});
+
+test('chore! → major (breaking overrides none)', () => {
+  assert.equal(determineBump('chore!: drop node 18').bump, 'major');
 });
 
 test('feat! bang → major', () => {
@@ -73,6 +83,11 @@ test('all declared types parse', () => {
     assert.equal(r.error, undefined, `type ${type} should parse`);
     assert.equal(r.type, type);
   }
+});
+
+test('applyBump none returns version unchanged', () => {
+  assert.equal(applyBump('1.2.3', 'none'), '1.2.3');
+  assert.equal(applyBump('0.0.0', 'none'), '0.0.0');
 });
 
 test('applyBump major resets minor+patch', () => {

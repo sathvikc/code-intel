@@ -15,7 +15,8 @@ if [ $# -lt 1 ] || [ -z "${1:-}" ]; then
 Usage: scripts/commit.sh "<type>(<scope>)?!?: <subject>"
 
 Types:     feat, fix, perf, refactor, docs, style, test, build, ci, chore, revert
-Bumps:     BREAKING → major · feat → minor · everything else → patch
+Bumps:     BREAKING → major · feat → minor · docs/chore → none
+           everything else → patch
 
 Examples:
   scripts/commit.sh "feat: add shared-state analyzer"
@@ -45,12 +46,16 @@ fi
 echo "Running tests..."
 npm test --silent
 
-# 3. Bump version (writes package.json)
+# 3. Bump version (writes package.json only when bump is non-trivial)
 BUMP_INFO=$(node scripts/version-bump.js "$MSG")
 echo "Version: $BUMP_INFO"
 
-# 4. Stage package.json
-git add package.json
+# 4. Stage package.json only when version actually changed.
+#    `docs` and `chore` commits leave package.json untouched and must
+#    not stage it; otherwise the commit would carry no-op file changes.
+if ! grep -q '"bump":"none"' <<<"$BUMP_INFO"; then
+  git add package.json
+fi
 
 # 5. Commit (includes anything already staged by the user)
 git commit -m "$MSG"
