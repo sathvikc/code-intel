@@ -25,7 +25,7 @@ Shipped (also listed for cross-reference with `PATTERNS.md`):
 Planned:
 - [ ] Built-output scanning mode — parse `dist/**/*.html` and flag manifest duplicate ids, duplicate meta tags, duplicated script srcs, etc. (complements `duplicate-static-svg-id` source mode; catches what's actually shipped after SSR/SSG)
 - [ ] `module-scope-handler` — module-scope fn passed by name to `addEventListener` inside a re-runnable setup (see P7)
-- [ ] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (see P8)
+- [x] `proxied-platform-global` — `window.history = new Proxy(...)` and similar wholesale replacements of built-in globals (P8) — see D22
 - [ ] `BroadcastChannel` / `MessageChannel`
 - [ ] Change-coupling from git history (co-changed files with no import edge)
 - [x] `shape-drift` v2 (CustomEvent.detail channel) — `event-shape-drift` finding kind; write-side detail extraction from `new CustomEvent(ch, { detail: {...} })`; read-side detail shape from inline handlers (plain param, nested destructure, binding alias); alias-follow on dispatch; same literal-threshold emission rule as storage (see D17)
