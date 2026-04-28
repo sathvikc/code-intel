@@ -12,6 +12,7 @@ dist/
 CLAUDE.md
 .claude
 .clauderc
+.windsurf
 .ai-history/
 .reference/
 graphify-out/
