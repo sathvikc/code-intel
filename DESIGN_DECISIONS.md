@@ -1278,3 +1278,108 @@ designed to amortise.
 - **`event-shape-drift` kind on a separate `shape-drift.events` analyzer ID.** Rejected: same duplication cost as approach B, plus an additional registry entry with no gain. One analyzer can emit two finding kinds; that is the established precedent (`duplicate-static-svg-id` emits `declare` and `reference` occurrence ops on a single finding kind; `shared-state-web-storage` groups both storage backends under one analyzer with a `backend` discriminator).
 
 **Reasoning:** The pattern is one thing — write shape vs read shape across a serialization boundary — regardless of whether the boundary is `JSON.stringify`/`getItem` or `CustomEvent.detail`. Keeping it in one module means the shared extraction helpers (`extractObjectLiteralKeys`, usage walker, same-scope binding resolver) are maintained once, and every future channel addition (cookies, URL params, `BroadcastChannel.postMessage`) follows the same extension point. The two-finding-kind approach threads the needle between D3's additive contract (old kind untouched) and D13's single-entry-per-pattern philosophy.
+
+## D18 — `patternFingerprint`: a second, location-free identity for every finding
+
+**Status:** active
+**Related:** D3 (schema additive), Q5 (inline suppression comments), Q9 (self-improving suppression loop), `--baseline` diff in `impact.js#computeDiff`
+
+**Decision:** Every finding emitted by `impact` carries a second fingerprint field, `patternFingerprint`, alongside the existing `fingerprint` field. The new field hashes only the **shape** of the finding — its kind plus the logical identity facts that name the coupling (storage + key, channel, name, sorted key set, etc.) — and deliberately omits all location facts (project, file, line, column). The existing `fingerprint` field is unchanged and continues to denote the **instance** identity at whatever granularity each kind already uses. Schema-additive: no existing consumer breaks, no `SCHEMA_VERSION` bump.
+
+**Context:** Today's `fingerprint` field has inconsistent granularity by kind. For class-like kinds (`shared-storage-key` static, `shared-event-channel` static, `shared-global-binding`, `shape-drift`, `event-shape-drift`, `structural-drift`) it already hashes only the logical identity, so adding/removing files does NOT change it. For per-site kinds (`paired-keys`, dynamic findings, `stale-module-capture`, `event-bridge`, every `lifecycle-cleanup-drift` sub-kind, `duplicate-static-svg-id`) the hash includes location facts, so moving the same coupling to a new file/line produces a different fingerprint. That inconsistency is fine for `--baseline` (it picks one axis per kind, matching the kind's natural identity), but it makes "suppress all findings of this shape, anywhere" impossible to express with a single field. Two natural axes — instance ("this exact finding") and pattern ("this shape, anywhere") — need two fingerprints.
+
+**Recipe per kind (canonical; deterministic; sha256 → first 16 hex chars, same hash function as `fingerprint`):**
+
+| Kind                          | `patternFingerprint` parts (joined by `\|`)             |
+| ----------------------------- | ------------------------------------------------------- |
+| `shared-storage-key` (static) | `kind \| storage \| key`                                |
+| `shared-storage-key` (dynamic)| `kind \| 'dynamic' \| storage`                          |
+| `shared-event-channel` (static) | `kind \| channel`                                     |
+| `shared-event-channel` (dynamic) | `kind \| 'dynamic'`                                  |
+| `shared-global-binding`       | `kind \| name`                                          |
+| `stale-module-capture`        | `kind \| capturedVia` (e.g. `'document.cookie'`)        |
+| `paired-keys`                 | `kind \| storage \| sortedKeys.join('+')`               |
+| `shape-drift`                 | `kind \| storage \| key`                                |
+| `event-shape-drift`           | `kind \| channel`                                       |
+| `structural-drift`            | `kind \| module \| exportedName`                        |
+| `event-bridge`                | `kind \| channel \| fromHost \| toHost`                 |
+| `missing-teardown`            | `kind \| registrationKind`                              |
+| `abort-never-called`          | `kind` (degenerate; pattern is the kind itself)         |
+| `handler-identity-mismatch`   | `kind \| channel`                                       |
+| `duplicate-static-svg-id`     | `kind \| id`                                            |
+
+For some kinds the `patternFingerprint` is byte-identical to the existing `fingerprint` (every static class-like kind in row 1, 3, 5, 8–10 above). Both fields ship anyway. Consistency for downstream consumers — they always look at `patternFingerprint` for shape-level work and `fingerprint` for instance-level work — is worth more than the few bytes saved by omitting the duplicate.
+
+**Stability rules** (mirrors the existing `fingerprint` doc-block):
+
+- `patternFingerprint` is stable across re-runs as long as the logical identity doesn't change. Adding/removing/moving occurrence files NEVER changes it for any kind.
+- Renaming a coupling key DOES change it. That's the intent — a renamed key is a different pattern.
+- No stability guarantee across `SCHEMA_VERSION` bumps. Same caveat as `fingerprint`.
+
+**What it unlocks (deferred work, NOT part of this slice):**
+
+1. **Suppression on two axes** (Q5, Q9). Inline `// code-intel-disable-next-line @<patternFingerprint>` suppresses every finding of that shape, anywhere; `// code-intel-disable-next-line #<fingerprint>` suppresses just this site. Both forms have a stable hash to bind to. The suppression file format is out of scope for this entry — Q5 stays open.
+2. **`--baseline --by pattern`** (or equivalent). Today `computeDiff` keys by `fingerprint`. A second mode keyed by `patternFingerprint` enables ratcheting at shape level — useful when a coupling has migrated from one file to another and the user wants it counted as "unchanged." The CLI flag and `computeDiff` extension are deferred; this entry just exposes the field.
+3. **Triage UX collapse.** Markdown / future MCP consumers can group findings by `patternFingerprint` and show one row per shape with a count. Today every finding is a row; for kinds that emit per-site findings (`missing-teardown`, `abort-never-called`, `paired-keys`), this is noisy.
+
+**Schema impact (D3):** purely additive. Existing consumers reading `f.fingerprint` see exactly the pre-D18 value. New consumers can opt into `f.patternFingerprint`. No `SCHEMA_VERSION` bump.
+
+**Alternatives considered:**
+
+- **Make `fingerprint` always class-level; expose location separately.** Rejected: breaking change for `--baseline` (today's diff would re-key for every per-site kind, changing what `unchanged` means). The existing `fingerprint` semantics are load-bearing for at least one shipped feature.
+- **Make `fingerprint` always site-level; require consumers to compute the pattern themselves.** Rejected: every consumer has to learn the per-kind recipe. Centralising the recipe in the analyzer is a one-time cost; pushing it to consumers is paid every time.
+- **Ship a single `fingerprints: { instance, pattern }` struct.** Rejected: nesting under one key buys nothing and breaks the existing `f.fingerprint` access pattern. Two top-level keys are simpler and the additive contract holds.
+- **Wait until Q5 (suppression syntax) lands and define both at once.** Rejected: Q5 is a syntax decision; D18 is a primitive. The primitive is useful even before Q5 (baseline-by-pattern; triage collapse) and ships in half a day. Decoupling lets Q5 incubate on its own timetable.
+
+**Reasoning:** The current `fingerprint` field is conceptually overloaded — it answers "is this the same finding as last run?" but the answer's granularity drifts by kind. Splitting it into two named axes — `fingerprint` for instance, `patternFingerprint` for shape — names exactly what each consumer wants. Most of the work is in the per-kind recipe (table above); the rest is a parallel `patternFingerprintFor()` helper that strips location facts. This is the smallest schema-additive change that turns "suppression by hash" from a one-trick mechanism into a two-axis primitive that the rest of the suppression / baseline / triage stack can be built on cleanly.
+
+## D19 — `closure` axis: closed-world vs open-world confidence scoring
+
+**Status:** active
+**Related:** D2 (recall over precision), Q3 (configuration format), `confidenceFor*` functions in `impact.js`
+
+**Decision:** `code-intel impact` (and per-detector subcommands and `trace`) accept a `--world <closed|open>` flag, defaulting to `open` (today's behaviour). The flag is propagated through the analyzer pipeline as a single `closure` field and read by every `confidenceFor*` function in `impact.js` to drop "the missing side may live in another repo we did not scan" hedges and, where appropriate, raise the confidence tier of orphan-side findings (writer-only / reader-only / single-dispatcher / single-listener) under closed-world. CLI flag is the only entry point in v1; the configuration file (Q3) inherits the same key when it lands.
+
+**Context:** Several `confidenceFor*` functions today emit hedges of the form *"…or a reader the analyzer did not scan (a worker, a wrapper module, a different repo) may still rely on them."* That hedge is correct under open-world (the user gave us SOME paths; consumers may live elsewhere) and **wrong** under closed-world (the user gave us EVERYTHING that produces or consumes this signal). Without an axis, the tool has to assume open-world for safety, which floors the confidence and severity of orphan-side findings even when the user knows the world is closed. The dogfood report flagged this as a recurring source of low confidence on findings the user could see were real with their own eyes — the analyzer just didn't have the input to know.
+
+**Why "closure" over "scope" / "monorepo vs multi-repo":** the property the confidence layer needs is *"are the paths I gave you everything that touches this signal?"* — not topology. A solo single-repo project that ships a JS SDK has consumers we cannot scan (open). A 12-package monorepo passed in full to `code-intel` is closed even though it's "cross-project." A multi-repo system passed as N paths IS closed if all consumers/producers are among those N. Naming the field `closure: closed | open` (or `--world closed|open` on the CLI) describes the property the user is asserting, not the topology they happen to have.
+
+**v1 scope (what ships first):**
+
+- New CLI flag: `--world <closed|open>`. Default `open`. Honoured by `impact`, `trace`, and every per-analyzer subcommand. Documented in `cli.js` USAGE.
+- Plumbed into `impact.analyzeProjects(opts)` as `opts.closure`. Detectors receive it via the same `opts` object (most don't need it; only `confidenceFor*` does).
+- Every `confidenceFor*` function takes `closure` as input and:
+  - **Open:** existing reasons, existing tiers (no behaviour change vs today).
+  - **Closed:** drops the *"may live in another repo / worker / external bundle"* fragments from the existing reason text. For specific orphan-side findings, raises confidence one tier (medium → high) per the table below.
+- Snapshot test + at least one new explicit test per behaviour change (open → closed bump for the affected kinds).
+
+**Confidence-tier shifts under `--world closed` (v1):**
+
+| Finding shape                                           | Open (today)  | Closed                |
+| ------------------------------------------------------- | ------------- | --------------------- |
+| `shape-drift` `writeOnlyKeys=[…]` (storage)             | medium        | **high**              |
+| `event-shape-drift` `writeOnlyKeys=[…]`                 | medium        | **high**              |
+| `shape-drift` `readOnlyKeys=[…]`                        | high (today)  | high (unchanged)      |
+| `shared-event-channel` single-dispatcher channel        | filtered/info | medium-warning        |
+| `shared-event-channel` single-listener channel          | filtered/info | medium-warning        |
+| `paired-keys` cluster (no other writer in scanned world)| medium        | medium-high           |
+| Every reason mentioning *"a different repo"*            | hedge present | hedge dropped         |
+| `stale-module-capture`                                  | medium        | medium (unchanged — runtime model, not closure) |
+
+**Out of scope (v1, deferred):**
+
+- Per-project `closure` in multi-project runs. v1 applies one flag value to every scanned project. When the configuration file (Q3) lands, each project's config block carries its own `closure: closed | open`. Cross-reference Q3.
+- Closure-aware filtering of orphan-side findings into a separate finding kind. v1 raises confidence/tier; it does not split findings into new kinds. If dogfood shows the orphan-side findings are noisy enough to warrant a separate kind, that's a follow-up.
+- Closure in trace (`code-intel trace --storage|--event|--global`). v1 of `trace` is reshape-only (D12). Trace's confidence story is downstream; the flag plumbs through identically but no `confidenceFor*`-equivalent exists in trace yet.
+- Auto-detection (e.g. inferring `closed` from a monorepo workspace config). v1 is user-asserted only. We do not predict; the user states the property.
+
+**Schema impact (D3):** additive. Findings gain no new fields by default — the `closure` value influences `confidence`, `confidenceReason`, and (for some kinds) `severity`. Optionally the `meta` block on the report envelope gains `worldClosure: 'closed' | 'open'` so a consumer can tell which mode produced the report. No `SCHEMA_VERSION` bump.
+
+**Alternatives considered:**
+
+- **`scope: solo | monorepo | multi-repo`.** Rejected per the rename rationale above — describes topology, not the property the confidence layer needs.
+- **Auto-detect closure from the input paths.** Rejected: ambiguous in every case (a single repo with a published SDK is open; the same repo without external consumers is closed). User assertion is the only correct signal.
+- **Wait for the config file format (Q3) to land first.** Rejected: the CLI flag is a half-day change and is independently useful for one-off PR reports / CI runs that don't carry persistent config. Config inherits the same key when Q3 resolves; nothing has to be redesigned.
+- **Split into two separate flags (`--no-cross-repo-hedges` and `--orphan-confidence-bump`).** Rejected: the two are aspects of the same user assertion (closed-world). Forcing them apart at the CLI surface means users have to know to set both; one of them is redundant if the other is set; and the two-flag form provides no orthogonal value worth the API cost.
+
+**Reasoning:** The confidence layer today is constrained to assume open-world because the alternative — guessing closure — would be wrong. Letting the user assert closure with a single CLI flag turns the tool's most apologetic confidence reasons ("may live in another repo we did not scan") into either dropped fragments or upgraded tiers, deterministically. The mechanical change is small (one flag, one option threaded through analyzers, one closure-aware branch in each `confidenceFor*` function). The behavioural change is large — under `--world closed`, orphan-side findings stop being second-class citizens of the report. This is also the cleanest forward-compatible point to slot the framework-context config (`rendering`, `navigation`) into when Q3 resolves, because closure is the same shape of axis: a user assertion about the project's deployment/world, consumed by confidence scoring.

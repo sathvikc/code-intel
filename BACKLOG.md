@@ -70,6 +70,10 @@ Planned:
 - [ ] `--since` soft warning on huge diffs (cap changed-files list in markdown; warn when >50)
 - [ ] `trace --layout star|flow|grouped` — writers / hub / readers split with file-group subgraphs; default `grouped` for N > 5
 - [ ] Test-context-aware confidence scoring — weight production occurrences higher than test occurrences; depends on glob `--exclude` above or framework-context config (see Q3)
+- [ ] `patternFingerprint` field on every finding (location-free pattern identity, parallel to existing `fingerprint`) — see D18. Schema-additive; foundation for two-axis suppression (Q5/Q9) and `--baseline --by pattern` ratcheting.
+- [ ] `--world closed|open` flag — user-asserted closure axis; drops "may live in another repo" hedges and bumps orphan-side confidence tiers (writer-only, listener-only, single-dispatcher) under closed-world; CLI-only in v1, config-file integration deferred to Q3 — see D19
+- [ ] `--baseline --by pattern` mode — ratchet diff at `patternFingerprint` granularity (treat coupling moves between files as `unchanged`); piggy-backs on D18 once shipped
+- [ ] Triage-collapse rendering — markdown / future MCP consumers group findings by `patternFingerprint` and emit one row per shape with a count; piggy-backs on D18
 
 ## Detector noise reduction (dogfood-driven)
 
