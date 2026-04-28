@@ -363,6 +363,12 @@ export function analyzeProjects(projectRoots, opts = {}) {
   const findings = [...groups.values()]
     .filter((f) => {
       if (f.dynamic) return true;
+      // D20: static channels must span ≥2 distinct files
+      const distinctFiles = new Set(
+        f.occurrences.map((o) => `${o.project}::${o.file}`),
+      );
+      if (distinctFiles.size < 2) return false;
+      // Existing native-event filter (unchanged)
       if (!NATIVE_DOM_EVENTS.has(f.channel)) return true;
       const hasDispatch = f.occurrences.some((o) => o.op === 'dispatch');
       return hasDispatch;

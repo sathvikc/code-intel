@@ -252,6 +252,7 @@ test('skips node_modules and other ignored dirs', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/real.ts', `window.dispatchEvent(new CustomEvent('real'));`);
+  write(a, 'src/listen.ts', `window.addEventListener('real', h);`);  // ← add
   write(a, 'node_modules/pkg/dist/index.js', `window.dispatchEvent(new CustomEvent('noise'));`);
   write(a, 'dist/bundle.js', `window.dispatchEvent(new CustomEvent('noise'));`);
 
@@ -264,6 +265,7 @@ test('schema shape: top-level + finding + occurrence fields', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/one.ts', `window.addEventListener('x', h);`);
+  write(a, 'src/two.ts', `window.dispatchEvent(new CustomEvent('x'));`);  // ← add
 
   const result = analyzeProjects([a]);
   assert.equal(result.version, SCHEMA_VERSION);
@@ -276,9 +278,9 @@ test('schema shape: top-level + finding + occurrence fields', () => {
   assert.equal(f.channel, 'x');
   assert.equal(f.dynamic, false);
 
-  const o = f.occurrences[0];
+  const o = f.occurrences.find((oc) => oc.file === path.join('src', 'one.ts'));
+  assert.ok(o, 'expected occurrence from src/one.ts');
   assert.equal(o.project, 'app');
-  assert.equal(o.file, path.join('src', 'one.ts'));
   assert.equal(o.op, 'listen');
   assert.equal(o.detectedVia, 'event-listener');
   assert.equal(o.host, 'window');
@@ -332,12 +334,24 @@ test('KEEPS native-named channel if at least one occurrence is dispatch', () => 
   assert.equal(f.occurrences.length, 2);
 });
 
-test('KEEPS custom-named channels even when listen-only (no dispatch)', () => {
-  // `profile:changed` is not a native event — a single-site listener
-  // is still a weak coupling signal (the dispatcher may be out of scope).
+test('D20: drops single-file custom-named listen-only channel', () => {
+  // Under D20, a single-file orphan listener is not a coupling.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/listen.ts', `window.addEventListener('profile:changed', h);`);
+  const result = analyzeProjects([a]);
+  assert.ok(
+    !result.findings.some((f) => f.channel === 'profile:changed'),
+    'single-file listen-only must be filtered under D20',
+  );
+});
+
+test('D20: KEEPS custom-named listen-only when ≥2 files listen', () => {
+  // ≥2 files share the channel name → coupling claim is real.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/listen-a.ts', `window.addEventListener('profile:changed', h);`);
+  write(a, 'src/listen-b.ts', `window.addEventListener('profile:changed', h);`);
   const result = analyzeProjects([a]);
   assert.ok(result.findings.some((f) => f.channel === 'profile:changed'));
 });
@@ -348,6 +362,41 @@ test('dynamic findings are NOT filtered by native-event rule', () => {
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/a.ts', `window.addEventListener(eventName, h);`);
+  const result = analyzeProjects([a]);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].dynamic, true);
+});
+
+// ---------- D20: ≥2-file threshold for static channels ----------
+
+test('D20: drops same-file dispatch+listen pair', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/app.ts', `window.addEventListener('foo', () => {});
+window.dispatchEvent(new CustomEvent('foo'));`);
+  const result = analyzeProjects([a]);
+  assert.ok(
+    !result.findings.some((f) => f.channel === 'foo'),
+    'same-file dispatch+listen must be filtered under D20',
+  );
+});
+
+test('D20: keeps cross-file dispatch+listen pair', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/emitter.ts', `window.dispatchEvent(new CustomEvent('foo'));`);
+  write(a, 'src/receiver.ts', `window.addEventListener('foo', h);`);
+  const result = analyzeProjects([a]);
+  const f = result.findings.find((x) => x.channel === 'foo');
+  assert.ok(f, 'cross-file dispatch+listen must produce a finding');
+  assert.equal(f.occurrences.length, 2);
+});
+
+test('D20: dynamic findings are unaffected by ≥2-file threshold', () => {
+  // Dynamic findings are per-site — never grouped by file count.
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'app' }));
+  write(a, 'src/a.ts', `window.dispatchEvent(new CustomEvent(eventName));`);
   const result = analyzeProjects([a]);
   assert.equal(result.findings.length, 1);
   assert.equal(result.findings[0].dynamic, true);

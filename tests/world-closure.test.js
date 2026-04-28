@@ -62,9 +62,11 @@ test('worldClosure open explicit: same as default', () => {
 });
 
 test('worldClosure default: event channel one-sided is medium', () => {
+  // D20: need ≥2 files; use two listeners (still one-sided — no dispatch).
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/a.ts', `window.addEventListener('ping', () => {});`);
+  write(a, 'src/b.ts', `window.addEventListener('ping', () => {});`);
   const r = analyzeProjects([a]);
   const f = findingOf(r, 'shared-event-channel');
   assert.ok(f);
@@ -101,9 +103,11 @@ test('closed: confidenceStorageKey single-file drops "wrapper module" hedge', ()
 });
 
 test('closed: confidenceEventChannel drops "fired by a library" hedge', () => {
+  // D20: need ≥2 files; use two listeners (still one-sided — no dispatch).
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/a.ts', `window.addEventListener('ping', () => {});`);
+  write(a, 'src/b.ts', `window.addEventListener('ping', () => {});`);
   const r = analyzeProjects([a], { closure: 'closed' });
   const f = findingOf(r, 'shared-event-channel');
   assert.ok(f);
@@ -161,9 +165,11 @@ test('closed raises: storage cross-file same-op medium → high', () => {
 });
 
 test('closed raises: event channel one-sided medium → high', () => {
+  // D20: need ≥2 files; use two listeners (still one-sided — no dispatch).
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/a.ts', `window.addEventListener('ping', () => {});`);
+  write(a, 'src/b.ts', `window.addEventListener('ping', () => {});`);
   const open = analyzeProjects([a], { closure: 'open' });
   const closed = analyzeProjects([a], { closure: 'closed' });
   const fo = findingOf(open, 'shared-event-channel');

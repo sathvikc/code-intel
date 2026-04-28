@@ -165,12 +165,14 @@ test('traceEvent: matches channel by literal name', () => {
 test('traceEvent: channel names containing colons are matched as-is', () => {
   // Regression: --event parsing must not try to split on colons the way
   // --storage does. "user:changed" is a single channel name.
+  // D20: need ≥2 files so the finding is not filtered out.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
   write(a, 'src/l.ts', `window.addEventListener('ns:evt', fn);`);
+  write(a, 'src/e.ts', `window.dispatchEvent(new CustomEvent('ns:evt'));`);
 
   const r = traceEvent([a], 'ns:evt');
-  assert.equal(r.summary.totalOccurrences, 1);
+  assert.equal(r.summary.totalOccurrences, 2);
 });
 
 // ---------- traceGlobal ----------

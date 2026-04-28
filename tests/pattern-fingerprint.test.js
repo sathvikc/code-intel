@@ -423,10 +423,13 @@ test('patternFingerprint: different keys → different patternFingerprint', () =
 });
 
 test('patternFingerprint: different event channels → different patternFingerprint', () => {
+  // D20: each channel must span ≥2 files; split dispatch and listen across files.
   const a = mktmp();
   write(a, 'package.json', JSON.stringify({ name: 'app' }));
-  write(a, 'src/e1.ts', `window.dispatchEvent(new CustomEvent('chan-alpha')); window.addEventListener('chan-alpha', () => {});`);
-  write(a, 'src/e2.ts', `window.dispatchEvent(new CustomEvent('chan-beta')); window.addEventListener('chan-beta', () => {});`);
+  write(a, 'src/emit-alpha.ts', `window.dispatchEvent(new CustomEvent('chan-alpha'));`);
+  write(a, 'src/listen-alpha.ts', `window.addEventListener('chan-alpha', () => {});`);
+  write(a, 'src/emit-beta.ts', `window.dispatchEvent(new CustomEvent('chan-beta'));`);
+  write(a, 'src/listen-beta.ts', `window.addEventListener('chan-beta', () => {});`);
 
   const r = analyzeProjects([a]);
   const fa = r.findings.find((x) => x.kind === 'shared-event-channel' && x.detail.channel === 'chan-alpha');
