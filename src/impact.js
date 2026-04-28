@@ -836,6 +836,65 @@ function fingerprintFor(kind, detail) {
   return crypto.createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
 }
 
+// patternFingerprintFor — sibling to fingerprintFor, hashes only the
+// SHAPE of a finding (kind + logical identity facts), never location.
+// See D18 for the per-kind recipe; this function is the canonical implementation.
+function patternFingerprintFor(kind, detail) {
+  const parts = [kind];
+  switch (kind) {
+    case 'shared-storage-key':
+      if (detail.dynamic) {
+        parts.push('dynamic', detail.storage ?? '?');
+      } else {
+        parts.push(detail.storage ?? '?', detail.key ?? '');
+      }
+      break;
+    case 'shared-event-channel':
+      if (detail.dynamic) {
+        parts.push('dynamic');
+      } else {
+        parts.push(detail.channel ?? '');
+      }
+      break;
+    case 'shared-global-binding':
+      parts.push(detail.name ?? '');
+      break;
+    case 'stale-module-capture':
+      parts.push(detail.capturedVia ?? '');
+      break;
+    case 'paired-keys':
+      parts.push(detail.storage ?? '?', [...(detail.keys ?? [])].sort().join('+'));
+      break;
+    case 'shape-drift':
+      parts.push(detail.storage ?? '?', detail.key ?? '');
+      break;
+    case 'event-shape-drift':
+      parts.push(detail.channel ?? '');
+      break;
+    case 'structural-drift':
+      parts.push(detail.module ?? '', detail.exportedName ?? '');
+      break;
+    case 'event-bridge':
+      parts.push(detail.channel ?? '', detail.fromHost ?? '', detail.toHost ?? '');
+      break;
+    case 'missing-teardown':
+      parts.push(detail.registrationKind ?? '');
+      break;
+    case 'abort-never-called':
+      // Degenerate: the pattern is the kind itself. Documented in D18.
+      break;
+    case 'handler-identity-mismatch':
+      parts.push(detail.channel ?? '');
+      break;
+    case 'duplicate-static-svg-id':
+      parts.push(detail.id ?? '');
+      break;
+    default:
+      parts.push(JSON.stringify(detail));
+  }
+  return crypto.createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
+}
+
 // ---------- git integration (optional) ----------
 
 /**
@@ -1048,6 +1107,7 @@ function wrap(kind, detail, rootById, changedFilesAbs) {
   return {
     id: findingIdFor(kind, detail),
     fingerprint: fingerprintFor(kind, detail),
+    patternFingerprint: patternFingerprintFor(kind, detail),
     kind,
     severity: severityFor(kind, detail),
     confidence,
