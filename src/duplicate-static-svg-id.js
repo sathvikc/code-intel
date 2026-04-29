@@ -88,7 +88,7 @@ export const SCHEMA_VERSION = '0.2';
 export const ANALYZER_ID = 'duplicate-static-svg-id';
 
 const HREF_ATTRS = new Set(['href', 'xlinkHref', 'xlink:href']);
-const URL_REF_PATTERN = /url\(\s*#([^\s)"']+)\s*\)/g;
+const URL_REF_PATTERN = /url\(\s*#([^\s)"']+)\s*\)/;
 const ITER_METHODS = new Set(['map', 'flatMap', 'forEach', 'reduce', 'reduceRight']);
 
 // ---------- public: per-file observation ----------
