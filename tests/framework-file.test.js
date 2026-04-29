@@ -67,17 +67,17 @@ test('extractAstroAsTs: preserves exact character count and newline positions', 
 
 // ---------- extractAstroAsTs: frontmatter ----------
 
-test('extractAstroAsTs: extracts frontmatter body verbatim, blanks fence lines', () => {
+test('extractAstroAsTs: blanks frontmatter body and fence lines entirely', () => {
   const src = `---\nconst K = 'app.session';\n---\n<div>x</div>\n`;
   const out = extractAstroAsTs(src);
 
-  // Frontmatter body must appear in the output at the same position.
-  assert.ok(out.includes(`const K = 'app.session';`));
+  // Frontmatter body must NOT appear in the output.
+  assert.ok(!out.includes(`const K = 'app.session';`));
   // The `---` fence lines themselves are blanked.
   const lines = out.split('\n');
   assert.match(lines[0], /^[ ]*$/, 'open fence line is blank');
   assert.match(lines[2], /^[ ]*$/, 'close fence line is blank');
-  assert.equal(lines[1], `const K = 'app.session';`);
+  assert.match(lines[1], /^[ ]*$/, 'frontmatter body is blanked');
 });
 
 test('extractAstroAsTs: does NOT treat mid-file --- as frontmatter (must start at byte 0)', () => {
@@ -141,7 +141,7 @@ test('extractAstroAsTs: <style> block is blanked even though it looks like code'
 
 // ---------- extractAstroAsTs: frontmatter + scripts together ----------
 
-test('extractAstroAsTs: extracts both frontmatter and inline scripts together', () => {
+test('extractAstroAsTs: blanks frontmatter but extracts inline scripts', () => {
   const src = [
     `---`,
     `import { K } from './keys';`,
@@ -156,8 +156,8 @@ test('extractAstroAsTs: extracts both frontmatter and inline scripts together', 
     ``,
   ].join('\n');
   const out = extractAstroAsTs(src);
-  assert.ok(out.includes(`import { K } from './keys';`));
-  assert.ok(out.includes(`const ready = true;`));
+  assert.ok(!out.includes(`import { K } from './keys';`));
+  assert.ok(!out.includes(`const ready = true;`));
   assert.ok(out.includes(`window.addEventListener('x', () => {});`));
   assert.ok(!out.includes('<div>'));
 });

@@ -147,8 +147,8 @@ export function extractAstroAsTs(src) {
       const closeRel = rest.search(FRONTMATTER_FENCE);
       if (closeRel !== -1) {
         const bodyEnd = bodyStart + closeRel;
-        // Keep the frontmatter body verbatim; the fence lines stay blank.
-        for (let i = bodyStart; i < bodyEnd; i++) out[i] = src[i];
+        // Blank out the frontmatter body. Do not copy it into the output.
+        // for (let i = bodyStart; i < bodyEnd; i++) out[i] = src[i];
       }
     }
   }

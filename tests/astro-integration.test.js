@@ -30,7 +30,7 @@ function write(root, rel, contents) {
 
 // ---------- Storage detection in .astro frontmatter + script ----------
 
-test('.astro frontmatter: shared-state-web-storage detects a setItem', () => {
+test('.astro frontmatter: shared-state-web-storage ignores bindings', () => {
   const root = mktmp();
   write(root, 'package.json', JSON.stringify({ name: 'astro-storage' }));
   write(
@@ -46,12 +46,7 @@ sessionStorage.setItem('page.flags', value);
 
   const result = analyzeStorage([root]);
   const finding = result.findings.find((f) => f.key === 'page.flags');
-  assert.ok(finding, 'finding emitted for the setItem call in frontmatter');
-  assert.equal(finding.occurrences.length, 1);
-  const o = finding.occurrences[0];
-  assert.ok(o.file.endsWith('.astro'));
-  assert.equal(o.line, 3, 'line maps to the original .astro line');
-  assert.equal(o.op, 'write');
+  assert.equal(finding, undefined, 'finding should not be emitted for frontmatter');
 });
 
 test('.astro inline <script>: shared-state-web-storage detects a setItem', () => {
@@ -77,15 +72,15 @@ test('.astro inline <script>: shared-state-web-storage detects a setItem', () =>
 
 // ---------- Cross-file coupling: .astro + .ts ----------
 
-test('.astro frontmatter + .ts consumer: shared-state-web-storage groups both', () => {
+test('.astro inline <script> + .ts consumer: shared-state-web-storage groups both', () => {
   const root = mktmp();
   write(root, 'package.json', JSON.stringify({ name: 'astro-cross' }));
   write(
     root,
     'src/pages/page.astro',
-    `---
+    `<script>
 sessionStorage.setItem('app.cart', JSON.stringify({ items: [] }));
----
+</script>
 <main />
 `,
   );
@@ -136,7 +131,7 @@ test('.astro inline <script>: shared-state-events detects dispatch + listen coup
 
 // ---------- Globals declared in .astro frontmatter ----------
 
-test('.astro frontmatter: shared-state-globals detects window.X assignment colliding with a .ts writer', () => {
+test('.astro frontmatter: shared-state-globals ignores window.X assignment', () => {
   const root = mktmp();
   write(root, 'package.json', JSON.stringify({ name: 'astro-glob' }));
   write(
@@ -152,8 +147,7 @@ window.__mnCartReady__ = true;
 
   const result = analyzeGlobals([root]);
   const finding = result.findings.find((f) => f.name === '__mnCartReady__');
-  assert.ok(finding, 'globals collision detected across .astro + .ts');
-  assert.ok(finding.occurrences.some((o) => o.file.endsWith('.astro')));
+  assert.equal(finding, undefined, 'globals collision not detected from frontmatter');
 });
 
 // ---------- paired-keys inside an .astro inline <script> ----------
@@ -185,15 +179,15 @@ test('.astro inline <script>: paired-keys detects a co-write cluster', () => {
 
 // ---------- shape-drift across .astro writer + .ts reader ----------
 
-test('.astro frontmatter writer + .ts reader: shape-drift detects the disagreement', () => {
+test('.astro inline <script> writer + .ts reader: shape-drift detects the disagreement', () => {
   const root = mktmp();
   write(root, 'package.json', JSON.stringify({ name: 'astro-drift' }));
   write(
     root,
     'src/pages/page.astro',
-    `---
+    `<script>
 localStorage.setItem('profile.v1', JSON.stringify({ firstName: 'a', lastName: 'b' }));
----
+</script>
 <main />
 `,
   );
@@ -218,16 +212,16 @@ test('.astro line numbers in findings match the original file positions exactly'
   // Intentionally put the statement on a very specific line so we can assert
   // against it. Nothing else is on lines 1-7; the setItem lives on line 8.
   const body = [
-    `---`,                                                          // 1
-    `// top comment`,                                               // 2
-    `// another comment`,                                           // 3
-    ``,                                                             // 4
+    `<div>`,                                                        // 1
+    `<!-- top comment -->`,                                         // 2
+    `<!-- another comment -->`,                                     // 3
+    `<script>`,                                                     // 4
     `const v = 'literal';`,                                         // 5
     `// noise`,                                                     // 6
     `// more noise`,                                                // 7
     `sessionStorage.setItem('line.test', v);`,                      // 8
-    `---`,                                                          // 9
-    `<main>{v}</main>`,                                             // 10
+    `</script>`,                                                    // 9
+    `<main></main>`,                                                // 10
   ].join('\n');
   write(root, 'src/pages/page.astro', body);
 
