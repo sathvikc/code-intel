@@ -1,0 +1,14 @@
+---
+// Astro frontmatter
+// This runs on the server. The engine should blank this block out.
+// If it didn't, this `window` assignment would collide with app-a's globals,
+// and the fetch would trigger `stale-captures`.
+globalThis.SHARED_CONFIG = { loaded: true };
+const data = await fetch('https://api.example.com/config').then(r => r.json());
+---
+<html>
+  <body>
+    <h1>Astro Page</h1>
+    <p>Data: {data}</p>
+  </body>
+</html>
