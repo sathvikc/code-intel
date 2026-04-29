@@ -652,3 +652,55 @@ test('D15: cross-file imported key surfaces drift between writer and reader', ()
     assert.equal(o.foldedFromModule, './keys');
   }
 });
+
+// ---------- single-hop return-value chain follow ----------
+
+test('read: single-hop return-value chain follow (helper function)', () => {
+  const { reads } = analyzeSource(
+    `function readCache() {
+       return JSON.parse(localStorage.getItem('k') || '{}');
+     }
+     const data = readCache();
+     console.log(data.field);`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].opaque, false);
+  assert.deepEqual(reads[0].keys, ['field']);
+});
+
+test('read: single-hop return-value chain follow (arrow function)', () => {
+  const { reads } = analyzeSource(
+    `const readCache = () => JSON.parse(localStorage.getItem('k') || '{}');
+     const { a, b } = readCache();`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].opaque, false);
+  assert.deepEqual(reads[0].keys, ['a', 'b']);
+});
+
+test('read: single-hop return-value chain follow (direct property access)', () => {
+  const { reads } = analyzeSource(
+    `function readCache() { return JSON.parse(localStorage.getItem('k') || '{}'); }
+     console.log(readCache().x);`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].opaque, false);
+  assert.deepEqual(reads[0].keys, ['x']);
+});
+
+test('read: single-hop return-value chain follow merges multiple call sites', () => {
+  const { reads } = analyzeSource(
+    `function readCache() { return JSON.parse(localStorage.getItem('k') || '{}'); }
+     const d1 = readCache();
+     console.log(d1.a);
+     const d2 = readCache();
+     console.log(d2.b);`,
+    'f.ts',
+  );
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].opaque, false);
+  assert.deepEqual(reads[0].keys, ['a', 'b']);
+});

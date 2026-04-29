@@ -271,6 +271,109 @@ function extractReadShape(parseCall, sourceFile) {
     }
     return { opaque: true, reason: 'complex-binding-pattern' };
   }
+
+  // Single-hop return-value chain follow (v1.5)
+  if (ts.isReturnStatement(parent) || (ts.isArrowFunction(parent) && parent.body === parseCall)) {
+    let func = parent;
+    while (func && !isFunctionLike(func)) {
+      func = func.parent;
+    }
+    if (func) {
+      let funcName = null;
+      if (func.name && ts.isIdentifier(func.name)) {
+        funcName = func.name.text;
+      } else if (func.parent && ts.isVariableDeclaration(func.parent) && ts.isIdentifier(func.parent.name)) {
+        funcName = func.parent.name.text;
+      }
+
+      if (funcName) {
+        const keys = new Set();
+        let hasOpaqueAccess = false;
+        let callFound = false;
+
+        const visitCalls = (node) => {
+          if (ts.isVariableDeclaration(node) && node.initializer && ts.isCallExpression(node.initializer)) {
+            const call = node.initializer;
+            if (ts.isIdentifier(call.expression) && call.expression.text === funcName) {
+              callFound = true;
+              const binding = node.name;
+              
+              if (ts.isObjectBindingPattern(binding)) {
+                for (const el of binding.elements) {
+                  if (el.dotDotDotToken) {
+                    hasOpaqueAccess = true;
+                    continue;
+                  }
+                  const key = el.propertyName ?? el.name;
+                  if (ts.isIdentifier(key)) {
+                    keys.add(key.text);
+                  } else if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
+                    keys.add(key.text);
+                  } else {
+                    hasOpaqueAccess = true;
+                  }
+                }
+              } else if (ts.isIdentifier(binding)) {
+                const usagesShape = extractReadShapeFromUsages(binding.text, node, sourceFile);
+                if (!usagesShape.opaque) {
+                  for (const k of usagesShape.keys) keys.add(k);
+                  if (usagesShape.partial) hasOpaqueAccess = true;
+                } else {
+                  hasOpaqueAccess = true;
+                }
+              } else {
+                hasOpaqueAccess = true;
+              }
+            }
+          }
+          if (ts.isPropertyAccessExpression(node) && ts.isCallExpression(node.expression)) {
+            const call = node.expression;
+            if (ts.isIdentifier(call.expression) && call.expression.text === funcName) {
+              callFound = true;
+              if (ts.isIdentifier(node.name)) {
+                keys.add(node.name.text);
+              } else {
+                hasOpaqueAccess = true;
+              }
+            }
+          }
+          if (ts.isElementAccessExpression(node) && ts.isCallExpression(node.expression)) {
+            const call = node.expression;
+            if (ts.isIdentifier(call.expression) && call.expression.text === funcName) {
+              callFound = true;
+              const arg = node.argumentExpression;
+              if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
+                keys.add(arg.text);
+              } else {
+                hasOpaqueAccess = true;
+              }
+            }
+          }
+          ts.forEachChild(node, visitCalls);
+        };
+
+        let scanScope = func.parent;
+        while (scanScope && scanScope.kind !== ts.SyntaxKind.SourceFile && !isFunctionLike(scanScope)) {
+          scanScope = scanScope.parent;
+        }
+        if (!scanScope) scanScope = sourceFile;
+        
+        visitCalls(scanScope);
+
+        if (callFound) {
+          if (keys.size === 0) {
+            return { opaque: true, reason: hasOpaqueAccess ? 'only-dynamic-accesses-on-binding' : 'binding-not-accessed' };
+          }
+          return {
+            opaque: false,
+            keys: [...keys].sort(),
+            partial: hasOpaqueAccess || undefined,
+          };
+        }
+      }
+    }
+  }
+
   // Any other parent context (inside an expression, return value, etc.)
   // — for v1 we don't track the result. This deliberately misses things
   // like `return JSON.parse(...)` / `callee(JSON.parse(...))`, which is
