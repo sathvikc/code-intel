@@ -34,6 +34,17 @@ const STORAGE_API_MEMBERS = new Set([
   'setItem', 'getItem', 'removeItem', 'clear', 'key', 'length',
 ]);
 
+// Framework-owned or language-internal storage keys that are not
+// user-actionable couplings — the user did not choose them and cannot
+// rename them. Findings on these keys are pure noise.
+// Start small; grow incrementally per dogfood observation.
+// Exported so a future config layer can extend or replace.
+export const FRAMEWORK_STORAGE_KEYS = new Set([
+  '__next',       // Next.js router hydration marker (sessionStorage)
+  'NEXT_LOCALE',  // Next.js i18n locale persistence
+  '__proto__',    // JS prototype slot — not a real storage key
+]);
+
 // SyntaxKinds of compound-assignment operators. Per D7, a compound assignment
 // on a storage element access emits both a read and a write occurrence.
 const COMPOUND_ASSIGNMENT_KINDS = new Set([
@@ -129,6 +140,8 @@ export function analyzeSource(code, filePath, preparsed, crossFileResolver) {
   const occurrences = [];
 
   function record(node, storage, key, dynamic, expressionText, op, detectedVia, foldedFrom, foldedFromModule) {
+    // Skip framework-owned / language-internal keys (not user-actionable)
+    if (!dynamic && key != null && FRAMEWORK_STORAGE_KEYS.has(key)) return;
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
     const snippet = node.getText(sourceFile).split('\n')[0].slice(0, 200);
     const occ = {

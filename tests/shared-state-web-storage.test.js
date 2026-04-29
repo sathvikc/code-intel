@@ -9,6 +9,7 @@ import {
   analyzeProjects,
   SCHEMA_VERSION,
   ANALYZER_ID,
+  FRAMEWORK_STORAGE_KEYS,
 } from '../src/shared-state-web-storage.js';
 import { createAstCache } from '../src/ast-cache.js';
 import { buildConstantsIndex, makeCrossFileResolver } from '../src/cross-file-constants.js';
@@ -355,4 +356,48 @@ test('D15: folds cross-file `import { K } from "./keys"` to the literal', () => 
     assert.equal(o.foldedFrom, 'K_SESSION');
     assert.equal(o.foldedFromModule, './keys');
   }
+});
+
+// ---------- framework-owned key allowlist ----------
+
+test('FRAMEWORK_STORAGE_KEYS is exported and non-empty', () => {
+  assert.ok(FRAMEWORK_STORAGE_KEYS instanceof Set);
+  assert.ok(FRAMEWORK_STORAGE_KEYS.size >= 3);
+});
+
+test('analyzeSource suppresses framework-owned keys across all patterns', () => {
+  const src = `
+    localStorage.setItem('__next', v);
+    sessionStorage.getItem('NEXT_LOCALE');
+    localStorage['__proto__'] = 1;
+    delete sessionStorage['__next'];
+    localStorage.__next;
+    localStorage.__next = 'x';
+  `;
+  const occ = analyzeSource(src, 'f.ts');
+  assert.equal(occ.length, 0, 'all framework-key occurrences should be suppressed');
+});
+
+test('non-allowlisted keys still emit alongside suppressed framework keys', () => {
+  const src = `
+    localStorage.setItem('__next', v);
+    localStorage.setItem('app.session', v);
+  `;
+  const occ = analyzeSource(src, 'f.ts');
+  assert.equal(occ.length, 1);
+  assert.equal(occ[0].key, 'app.session');
+});
+
+test('analyzeProjects filters framework keys from findings', () => {
+  const a = mktmp();
+  write(a, 'package.json', JSON.stringify({ name: 'fwk-test' }));
+  write(a, 'src/next-internal.ts', `sessionStorage.setItem('__next', 'hydration');`);
+  write(a, 'src/i18n.ts', `const loc = localStorage.getItem('NEXT_LOCALE');`);
+  write(a, 'src/real.ts', `localStorage.setItem('user.theme', 'dark');`);
+
+  const result = analyzeProjects([a]);
+  const keys = result.findings.filter(f => !f.dynamic).map(f => f.key);
+  assert.ok(!keys.includes('__next'), '__next should be filtered');
+  assert.ok(!keys.includes('NEXT_LOCALE'), 'NEXT_LOCALE should be filtered');
+  assert.ok(keys.includes('user.theme'), 'user keys should remain');
 });
