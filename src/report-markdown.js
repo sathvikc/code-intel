@@ -196,11 +196,22 @@ function renderFindingLine(out, f) {
     out.push('  | :--- | :--- | ---: | :--- |');
     for (const rf of f.relatedFiles) {
       out.push(
-        `  | \`${rf.project}\` | \`${rf.file}\` | ${rf.line ?? ''} | \`${rf.op ?? ''}\` |`,
+        `  | \`${rf.project}\` | \`${rf.file}\` | ${rf.line ?? ''} | \`${sanitizeOp(rf.op)}\` |`,
       );
     }
     out.push('');
   }
+}
+
+/**
+ * Clean up op text for markdown display. Native-function toString output
+ * (e.g. "function toString() { [native code] }") is replaced with
+ * "<dynamic>" so report rows stay scannable. JSON output is unaffected.
+ */
+function sanitizeOp(op) {
+  if (op == null) return '';
+  if (typeof op === 'string' && /\[native code\]/.test(op)) return '<dynamic>';
+  return op;
 }
 
 function groupBy(arr, keyFn) {

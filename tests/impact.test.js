@@ -508,6 +508,26 @@ test('renderMarkdown: includes blast radius section when present', () => {
   assert.ok(md.includes('consumer.ts'));
 });
 
+test('renderMarkdown: sanitizes native toString output in op column', () => {
+  const r = {
+    meta: { timestamp: '2026-04-29T12:00:00Z', base: null },
+    summary: { totalFindings: 1, bySeverity: { critical: 1 }, byKind: {} },
+    findings: [
+      {
+        id: 'test-finding',
+        severity: 'critical',
+        message: 'test message',
+        relatedFiles: [
+          { project: 'app', file: 'src/a.ts', line: 10, op: 'function toString() { [native code] }' }
+        ]
+      }
+    ]
+  };
+  const md = renderMarkdown(r);
+  assert.ok(!md.includes('[native code]'), 'native code should be sanitized out');
+  assert.ok(md.includes('`<dynamic>`'), 'should be replaced with <dynamic>');
+});
+
 // ---------- opts.exclude (Q14 / D11) ----------
 
 test('exclude: orchestrator passes opts.exclude through to every detector', () => {
