@@ -103,6 +103,36 @@ test('detects delete window.X as remove', () => {
   assert.equal(occurrences[0].detectedVia, 'delete');
 });
 
+// ---------- analyzeSource: full compound-assignment operator catalogue ----------
+
+test('detects all 16 compound-assignment operators on window.X as assign (regression: missing **=, <<=, >>=, >>>=)', () => {
+  const ops = [
+    ['=',    'a'],
+    ['+=',   'b'],
+    ['-=',   'c'],
+    ['*=',   'd'],
+    ['**=',  'e'],
+    ['/=',   'f'],
+    ['%=',   'g'],
+    ['<<=',  'h'],
+    ['>>=',  'i'],
+    ['>>>=', 'j'],
+    ['&=',   'k'],
+    ['|=',   'l'],
+    ['^=',   'm'],
+    ['&&=',  'n'],
+    ['||=',  'o'],
+    ['??=',  'p'],
+  ];
+  for (const [op, name] of ops) {
+    const { occurrences } = analyzeSource(`window.${name} ${op} 1;`, 'f.ts');
+    assert.equal(occurrences.length, 1, `expected 1 occurrence for: window.${name} ${op} 1`);
+    assert.equal(occurrences[0].op, 'assign');
+    assert.equal(occurrences[0].name, name);
+    assert.equal(occurrences[0].detectedVia, 'explicit-global');
+  }
+});
+
 // ---------- analyzeSource: classic-script declarations ----------
 
 test('classic script: top-level function X() is detected as declare', () => {

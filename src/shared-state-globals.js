@@ -39,6 +39,7 @@ import ts from 'typescript';
 import path from 'node:path';
 import { resolveProject, walkSourceFiles } from './project.js';
 import { readSource, scriptKindFor } from './framework-file.js';
+import { isAssignmentOperator } from './ast-helpers.js';
 
 export const SCHEMA_VERSION = '0.1';
 export const ANALYZER_ID = 'shared-state.globals';
@@ -203,23 +204,6 @@ export function analyzeSource(code, filePath, preparsed) {
   visit(sf);
 
   return { isModule, occurrences };
-}
-
-function isAssignmentOperator(kind) {
-  return (
-    kind === ts.SyntaxKind.EqualsToken ||
-    kind === ts.SyntaxKind.PlusEqualsToken ||
-    kind === ts.SyntaxKind.MinusEqualsToken ||
-    kind === ts.SyntaxKind.AsteriskEqualsToken ||
-    kind === ts.SyntaxKind.SlashEqualsToken ||
-    kind === ts.SyntaxKind.PercentEqualsToken ||
-    kind === ts.SyntaxKind.AmpersandEqualsToken ||
-    kind === ts.SyntaxKind.BarEqualsToken ||
-    kind === ts.SyntaxKind.CaretEqualsToken ||
-    kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
-    kind === ts.SyntaxKind.BarBarEqualsToken ||
-    kind === ts.SyntaxKind.QuestionQuestionEqualsToken
-  );
 }
 
 /**

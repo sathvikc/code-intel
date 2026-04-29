@@ -42,6 +42,7 @@
 // changes. This is additive and safe under the stable-schema decision.
 
 import ts from 'typescript';
+import { isAssignmentOperator } from './ast-helpers.js';
 
 /**
  * Per-file fold map. Opaque to callers; consume via `resolveFoldedIdentifier`
@@ -351,26 +352,3 @@ function isFunctionLike(node) {
   );
 }
 
-function isAssignmentOperator(kind) {
-  switch (kind) {
-    case ts.SyntaxKind.EqualsToken:
-    case ts.SyntaxKind.PlusEqualsToken:
-    case ts.SyntaxKind.MinusEqualsToken:
-    case ts.SyntaxKind.AsteriskEqualsToken:
-    case ts.SyntaxKind.AsteriskAsteriskEqualsToken:
-    case ts.SyntaxKind.SlashEqualsToken:
-    case ts.SyntaxKind.PercentEqualsToken:
-    case ts.SyntaxKind.LessThanLessThanEqualsToken:
-    case ts.SyntaxKind.GreaterThanGreaterThanEqualsToken:
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken:
-    case ts.SyntaxKind.AmpersandEqualsToken:
-    case ts.SyntaxKind.BarEqualsToken:
-    case ts.SyntaxKind.CaretEqualsToken:
-    case ts.SyntaxKind.BarBarEqualsToken:
-    case ts.SyntaxKind.AmpersandAmpersandEqualsToken:
-    case ts.SyntaxKind.QuestionQuestionEqualsToken:
-      return true;
-    default:
-      return false;
-  }
-}
