@@ -35,7 +35,7 @@ const ANALYZER_COMMANDS = Object.fromEntries(
 
 const USAGE = `Usage:
   code-intel impact          [paths...] [--since <ref>] [--baseline <path>] [--markdown|--json] [--pretty] [--exclude <path>]
-                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts] [--include-test-context] [--world closed|open]
+                             [--only <ids>] [--skip <ids>] [--no-cache | --cache-stats] [--include-build-artifacts] [--include-test-context] [--world closed|open] [--all-findings]
   code-intel trace           (--storage <backend:key> | --event <channel> | --global <name>)
                              [paths...] [--format json|mermaid] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
   code-intel shared-state    [paths...] [--pretty] [--exclude <path>] [--include-build-artifacts] [--include-test-context] [--world closed|open]
@@ -155,6 +155,9 @@ Options:
                   reads and parses each file itself (pre-D14 behaviour).
                   Useful for benchmarking or as a safety escape hatch.
                   Mutually exclusive with --cache-stats.
+  --all-findings  (impact only) Always show the detailed findings list in the
+                  markdown report, even if --since reports 0 findings touching
+                  the change set.
   --cache-stats   (impact only) print { size, hits, misses, readErrors,
                   parseErrors } of the per-run AST cache to stderr after
                   the run. Observability flag; does not change output
@@ -212,6 +215,7 @@ function parseImpactArgs(argv) {
     noCache: false,
     cacheStats: false,
     closure: 'open',
+    allFindings: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -251,6 +255,7 @@ function parseImpactArgs(argv) {
       }
       args.closure = v;
     }
+    else if (a === '--all-findings') args.allFindings = true;
     else if (a.startsWith('-')) throw new Error(`Unknown flag: ${a}`);
     else args.paths.push(a);
   }
@@ -307,7 +312,7 @@ async function runImpact(argv) {
   }
 
   if (args.format === 'markdown') {
-    process.stdout.write(renderMarkdown(result));
+    process.stdout.write(renderMarkdown(result, { allFindings: args.allFindings }));
   } else {
     const json = args.pretty ? JSON.stringify(result, null, 2) : JSON.stringify(result);
     process.stdout.write(json + '\n');

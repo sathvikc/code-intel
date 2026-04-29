@@ -528,6 +528,28 @@ test('renderMarkdown: sanitizes native toString output in op column', () => {
   assert.ok(md.includes('`<dynamic>`'), 'should be replaced with <dynamic>');
 });
 
+test('renderMarkdown: default-quiet mode when changedFileCount !== null and findingsTouchingChange === 0', () => {
+  const r = {
+    meta: { timestamp: '2026-04-29T12:00:00Z', base: 'HEAD~1', changedFileCount: 2 },
+    summary: { totalFindings: 1, findingsTouchingChange: 0, bySeverity: { info: 1 }, byKind: {} },
+    findings: [{ id: 'test', severity: 'info', message: 'untouched finding' }],
+  };
+  const md = renderMarkdown(r);
+  assert.ok(md.includes('0 findings touch the change set. Detail list suppressed'), 'should show suppression banner');
+  assert.ok(!md.includes('untouched finding'), 'should not render the finding detail');
+});
+
+test('renderMarkdown: quiet mode is overridden by --all-findings', () => {
+  const r = {
+    meta: { timestamp: '2026-04-29T12:00:00Z', base: 'HEAD~1', changedFileCount: 2 },
+    summary: { totalFindings: 1, findingsTouchingChange: 0, bySeverity: { info: 1 }, byKind: {} },
+    findings: [{ id: 'test', severity: 'info', message: 'untouched finding' }],
+  };
+  const md = renderMarkdown(r, { allFindings: true });
+  assert.ok(!md.includes('0 findings touch the change set. Detail list suppressed'), 'banner should be absent');
+  assert.ok(md.includes('untouched finding'), 'should render the finding detail because of --all-findings');
+});
+
 // ---------- opts.exclude (Q14 / D11) ----------
 
 test('exclude: orchestrator passes opts.exclude through to every detector', () => {

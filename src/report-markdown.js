@@ -49,9 +49,10 @@ const KIND_LABELS = {
   'duplicate-static-svg-id': 'Duplicate static SVG id',
 };
 
-export function renderMarkdown(result) {
+export function renderMarkdown(result, opts = {}) {
   const out = [];
   const { meta, summary, findings, graph, integrations } = result;
+  const allFindings = opts.allFindings ?? false;
 
   out.push('# code-intel — Impact Report');
   const tsShort = (meta.timestamp ?? '').replace('T', ' ').slice(0, 19);
@@ -155,6 +156,16 @@ export function renderMarkdown(result) {
     out.push('_No implicit-coupling, stale-capture, or global-binding findings produced for this scope._');
     out.push('');
     return out.join('\n');
+  }
+
+  const quietMode = meta.changedFileCount !== null && summary.findingsTouchingChange === 0 && !allFindings;
+
+  if (quietMode) {
+    out.push('## Findings');
+    out.push('');
+    out.push('_0 findings touch the change set. Detail list suppressed (use `--all-findings` to expand)._');
+    out.push('');
+    return out.join('\n').trimEnd() + '\n';
   }
 
   out.push('## Findings');
