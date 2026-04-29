@@ -102,7 +102,7 @@ Narrower than the noise items above — each fixes a specific recall gap inside 
 Items surfaced by an internal audit pass. Listed here so the surface stays discoverable without growing a separate doc file:
 
 - [ ] Consolidate duplicated `isFunctionLike` helper (3 copies: `fold-string-literals.js`, `shape-drift.js`, `paired-keys.js`) — export once, import three times
-- [ ] Consolidate duplicated `isAssignmentOperator` helper (3 copies) — and **fix recall gap** in `shared-state-globals.js` which is missing 4 operators (`**=`, `<<=`, `>>=`, `>>>=`); compound-assignment writes on those operators are silently not flagged today
+- [x] Consolidate duplicated `isAssignmentOperator` helper (3 copies) — and **fix recall gap** in `shared-state-globals.js` which is missing 4 operators (`**=`, `<<=`, `>>=`, `>>>=`); compound-assignment writes on those operators are silently not flagged today
 - [ ] Consolidate duplicated `collectReassignedNames` (2 copies: `fold-string-literals.js`, `cross-file-constants.js`); the comment claiming an import-cycle blocker in `cross-file-constants.js` is stale — there is no cycle
 - [ ] Consolidate duplicated `storageNameOf` helper (3 copies: `shared-state-web-storage.js`, `shape-drift.js`, `paired-keys.js`)
 - [ ] Drop the `g` flag from module-level `URL_REF_PATTERN` in `duplicate-static-svg-id.js` — the live `extractReferencedIds` already creates a fresh RegExp per call; the constant's `g` flag is misleading and a foot-gun for any future caller that uses it directly
